@@ -1,0 +1,18 @@
+definition_version: 2
+entities:
+  streamlit_app:
+    type: streamlit
+    main_file: streamlit_app.py
+    artifacts:
+      - pyproject.toml
+      - streamlit_app.py
+      - .streamlit/config.toml
+    identifier:
+      database: FLOWBRIDGE_PROD_DB
+      schema: SERVING_SCH
+      name: FLOWBRIDGESUPPLYCHAINDASHBOARD
+    title: FlowBridge Supply Chain Dashboard
+    query_warehouse: FLOWBRIDGE_ANALYTICS_WH
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    run_mode: SpcsOnly
+    execute_as: OWNER
