@@ -1,0 +1,946 @@
+```sql
+-- ============================================================================
+-- SESSION ENVIRONMENT SETUP
+-- ============================================================================
+
+SET ENV = 'DEV';
+SET DB = 'FLOWBRIDGE_' || $ENV || '_DB';
+
+USE DATABASE IDENTIFIER($DB);
+USE ROLE SYSADMIN;
+USE SCHEMA SILVER_SCH;
+USE WAREHOUSE FLOWBRIDGE_PIPELINE_WH;
+
+
+-- ============================================================================
+-- STEP 1 - TARGET LAYER STRUCTURES
+-- ============================================================================
+
+-- Dead Letter Table Definition
+------------------------------------------------------------
+
+CREATE OR REPLACE TRANSIENT TABLE SILVER_SCH.DEAD_LETTER (
+    RAW_DATA VARIANT,
+    ERROR_REASON STRING,
+    FILE_NAME STRING,
+    FILE_ROW_NUMBER NUMBER,
+    REJECTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Dead Letter Table - rejected/bad records from bronze';
+
+
+-- Permanent Staging Orders Table Definition
+-- Flattened JSON Data
+------------------------------------------------------------
+
+CREATE OR REPLACE TABLE SILVER_SCH.STG_ORDERS (
+
+    -- Order Fields
+    ORDER_ID          STRING COMMENT 'Unique order identifier',
+    ORDER_DATE        TIMESTAMP_NTZ COMMENT 'Order timestamp',
+    ORDER_STATUS      STRING COMMENT 'Current order status',
+
+    -- Customer fields
+    CUSTOMER_ID       STRING COMMENT 'Customer identifier',
+    CUSTOMER_NAME     STRING COMMENT 'Customer name',
+    CUSTOMER_REGION   STRING COMMENT 'Customer region',
+    CUSTOMER_SEGMENT  STRING COMMENT 'Customer segment',
+
+    -- Supplier fields
+    SUPPLIER_ID       STRING COMMENT 'Supplier identifier',
+    SUPPLIER_NAME     STRING COMMENT 'Supplier name',
+    SUPPLIER_COUNTRY  STRING COMMENT 'Supplier country',
+    LEAD_TIME_DAYS    NUMBER COMMENT 'Supplier lead time in days',
+    PERFORMANCE_SCORE FLOAT COMMENT 'Supplier performance score',
+
+    -- Shipment fields
+    SHIPMENT_ID        STRING COMMENT 'Shipment identifier',
+    CARRIER            STRING COMMENT 'Shipping carrier',
+    SHIP_DATE          TIMESTAMP_NTZ COMMENT 'Shipment date',
+    ESTIMATED_DELIVERY DATE COMMENT 'Estimated delivery date',
+    DELAY_DAYS         NUMBER COMMENT 'Number of delay days',
+
+    -- Product fields
+    PRODUCT_ID   STRING COMMENT 'Product identifier',
+    PRODUCT_NAME STRING COMMENT 'Product name',
+    CATEGORY     STRING COMMENT 'Product category',
+    QUANTITY     NUMBER COMMENT 'Order quantity',
+    UNIT_PRICE   FLOAT COMMENT 'Unit price',
+
+    -- Financial fields
+    TOTAL_AMOUNT   FLOAT COMMENT 'Total order amount',
+    PAYMENT_STATUS STRING COMMENT 'Payment status',
+
+    -- Warehouse fields
+    WAREHOUSE_ID       STRING COMMENT 'Warehouse identifier',
+    WAREHOUSE_LOCATION STRING COMMENT 'Warehouse location',
+    INVENTORY_LEVEL    NUMBER COMMENT 'Current inventory level',
+
+    -- Metadata
+    FILE_NAME       STRING COMMENT 'Source file name',
+    FILE_ROW_NUMBER NUMBER COMMENT 'Row number in source file',
+    INGESTED_AT     TIMESTAMP_NTZ COMMENT 'When record was ingested',
+    TRANSFORMED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        COMMENT 'When record was transformed'
+
+)
+COMMENT = 'Silver Stage 1 - flattened and cleaned supply chain orders';
+
+
+-- ============================================================================
+-- STEP 2 - CHANGE DATA CAPTURE (CDC) STREAM
+-- ============================================================================
+
+CREATE OR REPLACE STREAM SILVER_SCH.RAW_ORDERS_STREAM
+    ON TABLE FLOWBRIDGE_DEV_DB.BRONZE_SCH.RAW_ORDERS
+    APPEND_ONLY = TRUE
+    SHOW_INITIAL_ROWS = TRUE
+    COMMENT = 'Stream on raw_orders - captures new data for silver processing';
+
+
+-- Verify stream created
+
+SHOW STREAMS IN SCHEMA SILVER_SCH;
+
+
+-- ============================================================================
+-- STEP 3 - RUNTIME PIPELINE (ROUTING STORED PROCEDURE)
+-- ============================================================================
+
+CREATE OR REPLACE PROCEDURE SILVER_SCH.SP_BRONZE_TO_SILVER()
+
+RETURNS STRING
+LANGUAGE SQL
+
+COMMENT = 'SP - routes bad records to dead_letter, merges clean records to stg_orders - will be called by task'
+
+AS
+$$
+
+DECLARE
+
+    V_PROCESSED NUMBER DEFAULT 0;
+    V_REJECTED NUMBER DEFAULT 0;
+
+BEGIN
+
+
+    -- ========================================================================
+    -- PART 0 - BUFFER STREAM INTO TEMP TABLE
+    -- ========================================================================
+
+    CREATE OR REPLACE TEMPORARY TABLE STREAM_BUFFER AS
+
+    SELECT *
+    FROM SILVER_SCH.RAW_ORDERS_STREAM
+
+    WHERE METADATA$ACTION = 'INSERT';
+
+
+    SELECT COUNT(*)
+    INTO :V_PROCESSED
+    FROM STREAM_BUFFER;
+
+
+    -- ========================================================================
+    -- PART 1 - ROUTE BAD RECORDS TO DEAD LETTER
+    -- ========================================================================
+
+    INSERT INTO SILVER_SCH.DEAD_LETTER (
+
+        RAW_DATA,
+        ERROR_REASON,
+        FILE_NAME,
+        FILE_ROW_NUMBER
+
+    )
+
+    SELECT
+
+        S.RAW_DATA,
+
+        CASE
+
+            -- Order level validations
+
+            WHEN NULLIF(TRIM(S.RAW_DATA:order_id::STRING), '') IS NULL
+                THEN 'Missing order_id'
+
+            WHEN TRY_TO_TIMESTAMP_NTZ(
+                    S.RAW_DATA:order_date::STRING
+                 ) IS NULL
+
+                 AND TRY_TO_DATE(
+                    S.RAW_DATA:order_date::STRING,
+                    'DD-MM-YYYY'
+                 ) IS NULL
+
+                THEN 'Invalid or missing order_date'
+
+            WHEN UPPER(TRIM(S.RAW_DATA:order_status::STRING))
+                NOT IN (
+                    'PENDING',
+                    'PROCESSING',
+                    'SHIPPED',
+                    'IN TRANSIT',
+                    'DELIVERED',
+                    'CANCELLED'
+                )
+
+                THEN 'Invalid order_status: '
+                     || COALESCE(
+                         S.RAW_DATA:order_status::STRING,
+                         'NULL'
+                     )
+
+
+            -- Customer level validations
+
+            WHEN NULLIF(
+                    TRIM(S.RAW_DATA:customer.customer_id::STRING),
+                    ''
+                 ) IS NULL
+
+                THEN 'Missing customer_id'
+
+
+            -- Supplier level validations
+
+            WHEN NULLIF(
+                    TRIM(S.RAW_DATA:supplier.supplier_id::STRING),
+                    ''
+                 ) IS NULL
+
+                THEN 'Missing supplier_id'
+
+            WHEN TRY_TO_DOUBLE(
+                    S.RAW_DATA:supplier.performance_score::STRING
+                 ) > 100
+
+                THEN 'Invalid performance_score > 100: '
+                     || S.RAW_DATA:supplier.performance_score::STRING
+
+            WHEN TRY_TO_DOUBLE(
+                    S.RAW_DATA:supplier.performance_score::STRING
+                 ) < 0
+
+                THEN 'Invalid performance_score < 0: '
+                     || S.RAW_DATA:supplier.performance_score::STRING
+
+            WHEN TRY_TO_NUMBER(
+                    S.RAW_DATA:supplier.lead_time_days::STRING
+                 ) < 0
+
+                THEN 'Invalid lead_time_days < 0: '
+                     || S.RAW_DATA:supplier.lead_time_days::STRING
+
+
+            -- Product level validations
+
+            WHEN NULLIF(
+                    TRIM(S.RAW_DATA:items[0].product_id::STRING),
+                    ''
+                 ) IS NULL
+
+                THEN 'Missing product_id'
+
+            WHEN TRY_TO_NUMBER(
+                    S.RAW_DATA:items[0].quantity::STRING
+                 ) IS NULL
+
+                 OR TRY_TO_NUMBER(
+                    S.RAW_DATA:items[0].quantity::STRING
+                 ) <= 0
+
+                THEN 'Invalid quantity: '
+                     || COALESCE(
+                         S.RAW_DATA:items[0].quantity::STRING,
+                         'NULL'
+                     )
+
+            WHEN TRY_TO_DOUBLE(
+                    S.RAW_DATA:items[0].unit_price::STRING
+                 ) IS NULL
+
+                 OR TRY_TO_DOUBLE(
+                    S.RAW_DATA:items[0].unit_price::STRING
+                 ) < 0
+
+                THEN 'Invalid unit_price: '
+                     || COALESCE(
+                         S.RAW_DATA:items[0].unit_price::STRING,
+                         'NULL'
+                     )
+
+
+            -- Financial level validations
+
+            WHEN TRY_TO_DOUBLE(
+                    S.RAW_DATA:financials.total_amount::STRING
+                 ) IS NULL
+
+                 OR TRY_TO_DOUBLE(
+                    S.RAW_DATA:financials.total_amount::STRING
+                 ) < 0
+
+                THEN 'Invalid total_amount: '
+                     || COALESCE(
+                         S.RAW_DATA:financials.total_amount::STRING,
+                         'NULL'
+                     )
+
+
+            -- Warehouse level validations
+
+            WHEN TRY_TO_NUMBER(
+                    S.RAW_DATA:warehouse.inventory_level::STRING
+                 ) < 0
+
+                THEN 'Invalid inventory_level < 0: '
+                     || S.RAW_DATA:warehouse.inventory_level::STRING
+
+
+            ELSE 'Unknown'
+
+        END AS ERROR_REASON,
+
+        S.FILE_NAME,
+        S.FILE_ROW_NUMBER
+
+    FROM STREAM_BUFFER AS S
+
+    WHERE
+
+        -- Order level
+
+        NULLIF(TRIM(S.RAW_DATA:order_id::STRING), '') IS NULL
+
+        OR (
+            TRY_TO_TIMESTAMP_NTZ(
+                S.RAW_DATA:order_date::STRING
+            ) IS NULL
+
+            AND TRY_TO_DATE(
+                S.RAW_DATA:order_date::STRING,
+                'DD-MM-YYYY'
+            ) IS NULL
+        )
+
+        OR UPPER(TRIM(S.RAW_DATA:order_status::STRING))
+            NOT IN (
+                'PENDING',
+                'PROCESSING',
+                'SHIPPED',
+                'IN TRANSIT',
+                'DELIVERED',
+                'CANCELLED'
+            )
+
+
+        -- Customer level
+
+        OR NULLIF(
+            TRIM(S.RAW_DATA:customer.customer_id::STRING),
+            ''
+        ) IS NULL
+
+
+        -- Supplier level
+
+        OR NULLIF(
+            TRIM(S.RAW_DATA:supplier.supplier_id::STRING),
+            ''
+        ) IS NULL
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:supplier.performance_score::STRING
+        ) > 100
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:supplier.performance_score::STRING
+        ) < 0
+
+        OR TRY_TO_NUMBER(
+            S.RAW_DATA:supplier.lead_time_days::STRING
+        ) < 0
+
+
+        -- Product level
+
+        OR NULLIF(
+            TRIM(S.RAW_DATA:items[0].product_id::STRING),
+            ''
+        ) IS NULL
+
+        OR TRY_TO_NUMBER(
+            S.RAW_DATA:items[0].quantity::STRING
+        ) IS NULL
+
+        OR TRY_TO_NUMBER(
+            S.RAW_DATA:items[0].quantity::STRING
+        ) <= 0
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:items[0].unit_price::STRING
+        ) IS NULL
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:items[0].unit_price::STRING
+        ) < 0
+
+
+        -- Financial level
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:financials.total_amount::STRING
+        ) IS NULL
+
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:financials.total_amount::STRING
+        ) < 0
+
+
+        -- Warehouse level
+
+        OR TRY_TO_NUMBER(
+            S.RAW_DATA:warehouse.inventory_level::STRING
+        ) < 0;
+
+
+    -- ========================================================================
+    -- PART 2 - MERGE CLEAN RECORDS INTO STAGING TABLE
+    -- ========================================================================
+
+    MERGE INTO SILVER_SCH.STG_ORDERS AS TGT
+
+    USING (
+
+        SELECT
+
+            -- Order fields
+
+            UPPER(TRIM(S.RAW_DATA:order_id::STRING)) AS ORDER_ID,
+
+            TRY_TO_TIMESTAMP_NTZ(
+
+                CASE
+
+                    WHEN S.RAW_DATA:order_date::STRING LIKE '__-__-____'
+
+                    THEN TO_VARCHAR(
+                        TO_DATE(
+                            S.RAW_DATA:order_date::STRING,
+                            'DD-MM-YYYY'
+                        ),
+                        'YYYY-MM-DD'
+                    ) || 'T00:00:00'
+
+                    ELSE S.RAW_DATA:order_date::STRING
+
+                END
+
+            ) AS ORDER_DATE,
+
+            UPPER(TRIM(
+                S.RAW_DATA:order_status::STRING
+            )) AS ORDER_STATUS,
+
+
+            -- Customer fields
+
+            UPPER(TRIM(
+                S.RAW_DATA:customer.customer_id::STRING
+            )) AS CUSTOMER_ID,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:customer.customer_name::STRING
+                )),
+                'UNKNOWN'
+            ) AS CUSTOMER_NAME,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:customer.region::STRING
+                )),
+                'UNKNOWN'
+            ) AS CUSTOMER_REGION,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:customer.segment::STRING
+                )),
+                'UNKNOWN'
+            ) AS CUSTOMER_SEGMENT,
+
+
+            -- Supplier fields
+
+            UPPER(TRIM(
+                S.RAW_DATA:supplier.supplier_id::STRING
+            )) AS SUPPLIER_ID,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:supplier.supplier_name::STRING
+                )),
+                'UNKNOWN'
+            ) AS SUPPLIER_NAME,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:supplier.country::STRING
+                )),
+                'UNKNOWN'
+            ) AS SUPPLIER_COUNTRY,
+
+            COALESCE(
+                TRY_TO_NUMBER(
+                    S.RAW_DATA:supplier.lead_time_days::STRING
+                ),
+                0
+            ) AS LEAD_TIME_DAYS,
+
+            COALESCE(
+                TRY_TO_DOUBLE(
+                    S.RAW_DATA:supplier.performance_score::STRING
+                ),
+                0
+            ) AS PERFORMANCE_SCORE,
+
+
+            -- Shipment fields
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:shipment.shipment_id::STRING
+                )),
+                'UNKNOWN'
+            ) AS SHIPMENT_ID,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:shipment.carrier::STRING
+                )),
+                'UNKNOWN'
+            ) AS CARRIER,
+
+            TRY_TO_TIMESTAMP_NTZ(
+                S.RAW_DATA:shipment.ship_date::STRING
+            ) AS SHIP_DATE,
+
+            TRY_TO_DATE(
+                S.RAW_DATA:shipment.estimated_delivery::STRING
+            ) AS ESTIMATED_DELIVERY,
+
+            GREATEST(
+                COALESCE(
+                    TRY_TO_NUMBER(
+                        S.RAW_DATA:shipment.delay_days::STRING
+                    ),
+                    0
+                ),
+                0
+            ) AS DELAY_DAYS,
+
+
+            -- Product fields (items[0] -> first array element)
+
+            UPPER(TRIM(
+                S.RAW_DATA:items[0].product_id::STRING
+            )) AS PRODUCT_ID,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:items[0].product_name::STRING
+                )),
+                'UNKNOWN'
+            ) AS PRODUCT_NAME,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:items[0].category::STRING
+                )),
+                'UNKNOWN'
+            ) AS CATEGORY,
+
+            TRY_TO_NUMBER(
+                S.RAW_DATA:items[0].quantity::STRING
+            ) AS QUANTITY,
+
+            TRY_TO_DOUBLE(
+                S.RAW_DATA:items[0].unit_price::STRING
+            ) AS UNIT_PRICE,
+
+
+            -- Financial fields
+
+            TRY_TO_DOUBLE(
+                S.RAW_DATA:financials.total_amount::STRING
+            ) AS TOTAL_AMOUNT,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:financials.payment_status::STRING
+                )),
+                'UNKNOWN'
+            ) AS PAYMENT_STATUS,
+
+
+            -- Warehouse fields
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:warehouse.warehouse_id::STRING
+                )),
+                'UNKNOWN'
+            ) AS WAREHOUSE_ID,
+
+            COALESCE(
+                UPPER(TRIM(
+                    S.RAW_DATA:warehouse.warehouse_location::STRING
+                )),
+                'UNKNOWN'
+            ) AS WAREHOUSE_LOCATION,
+
+            COALESCE(
+                TRY_TO_NUMBER(
+                    S.RAW_DATA:warehouse.inventory_level::STRING
+                ),
+                0
+            ) AS INVENTORY_LEVEL,
+
+
+            -- Metadata
+
+            S.FILE_NAME,
+            S.FILE_ROW_NUMBER,
+            S.INGESTED_AT
+
+        FROM STREAM_BUFFER AS S
+
+        WHERE
+
+            S.RAW_DATA:order_id::STRING IS NOT NULL
+
+            AND (
+                TRY_TO_TIMESTAMP_NTZ(
+                    S.RAW_DATA:order_date::STRING
+                ) IS NOT NULL
+
+                OR TRY_TO_DATE(
+                    S.RAW_DATA:order_date::STRING,
+                    'DD-MM-YYYY'
+                ) IS NOT NULL
+            )
+
+            AND UPPER(TRIM(
+                S.RAW_DATA:order_status::STRING
+            )) IN (
+                'PENDING',
+                'PROCESSING',
+                'SHIPPED',
+                'IN TRANSIT',
+                'DELIVERED',
+                'CANCELLED'
+            )
+
+            AND S.RAW_DATA:customer.customer_id::STRING IS NOT NULL
+
+            AND S.RAW_DATA:supplier.supplier_id::STRING IS NOT NULL
+
+            AND TRY_TO_DOUBLE(
+                S.RAW_DATA:supplier.performance_score::STRING
+            ) BETWEEN 0 AND 100
+
+            AND (
+                TRY_TO_NUMBER(
+                    S.RAW_DATA:supplier.lead_time_days::STRING
+                ) IS NULL
+
+                OR TRY_TO_NUMBER(
+                    S.RAW_DATA:supplier.lead_time_days::STRING
+                ) >= 0
+            )
+
+            AND S.RAW_DATA:items[0].product_id::STRING IS NOT NULL
+
+            AND TRY_TO_NUMBER(
+                S.RAW_DATA:items[0].quantity::STRING
+            ) IS NOT NULL
+
+            AND TRY_TO_NUMBER(
+                S.RAW_DATA:items[0].quantity::STRING
+            ) > 0
+
+            AND TRY_TO_DOUBLE(
+                S.RAW_DATA:items[0].unit_price::STRING
+            ) IS NOT NULL
+
+            AND TRY_TO_DOUBLE(
+                S.RAW_DATA:items[0].unit_price::STRING
+            ) >= 0
+
+            AND TRY_TO_DOUBLE(
+                S.RAW_DATA:financials.total_amount::STRING
+            ) IS NOT NULL
+
+            AND TRY_TO_DOUBLE(
+                S.RAW_DATA:financials.total_amount::STRING
+            ) >= 0
+
+            AND (
+                TRY_TO_NUMBER(
+                    S.RAW_DATA:warehouse.inventory_level::STRING
+                ) IS NULL
+
+                OR TRY_TO_NUMBER(
+                    S.RAW_DATA:warehouse.inventory_level::STRING
+                ) >= 0
+            )
+
+    ) AS SRC
+
+    ON TGT.ORDER_ID = SRC.ORDER_ID
+
+
+    -- ========================================================================
+    -- UPDATE MATCHED RECORDS
+    -- ========================================================================
+
+    WHEN MATCHED THEN UPDATE SET
+
+        TGT.ORDER_STATUS       = SRC.ORDER_STATUS,
+        TGT.CARRIER            = SRC.CARRIER,
+        TGT.SHIP_DATE          = SRC.SHIP_DATE,
+        TGT.ESTIMATED_DELIVERY = SRC.ESTIMATED_DELIVERY,
+        TGT.DELAY_DAYS         = SRC.DELAY_DAYS,
+        TGT.INVENTORY_LEVEL    = SRC.INVENTORY_LEVEL,
+        TGT.PAYMENT_STATUS     = SRC.PAYMENT_STATUS,
+        TGT.CUSTOMER_NAME      = SRC.CUSTOMER_NAME,
+        TGT.CUSTOMER_REGION    = SRC.CUSTOMER_REGION,
+        TGT.SUPPLIER_NAME      = SRC.SUPPLIER_NAME,
+        TGT.PERFORMANCE_SCORE  = SRC.PERFORMANCE_SCORE,
+        TGT.WAREHOUSE_ID       = SRC.WAREHOUSE_ID,
+        TGT.WAREHOUSE_LOCATION = SRC.WAREHOUSE_LOCATION,
+        TGT.TRANSFORMED_AT     = CURRENT_TIMESTAMP()
+
+
+    -- ========================================================================
+    -- INSERT NEW RECORDS
+    -- ========================================================================
+
+    WHEN NOT MATCHED THEN INSERT (
+
+        ORDER_ID,
+        ORDER_DATE,
+        ORDER_STATUS,
+
+        CUSTOMER_ID,
+        CUSTOMER_NAME,
+        CUSTOMER_REGION,
+        CUSTOMER_SEGMENT,
+
+        SUPPLIER_ID,
+        SUPPLIER_NAME,
+        SUPPLIER_COUNTRY,
+        LEAD_TIME_DAYS,
+        PERFORMANCE_SCORE,
+
+        SHIPMENT_ID,
+        CARRIER,
+        SHIP_DATE,
+        ESTIMATED_DELIVERY,
+        DELAY_DAYS,
+
+        PRODUCT_ID,
+        PRODUCT_NAME,
+        CATEGORY,
+        QUANTITY,
+        UNIT_PRICE,
+
+        TOTAL_AMOUNT,
+        PAYMENT_STATUS,
+
+        WAREHOUSE_ID,
+        WAREHOUSE_LOCATION,
+        INVENTORY_LEVEL,
+
+        FILE_NAME,
+        FILE_ROW_NUMBER,
+        INGESTED_AT
+
+    )
+
+    VALUES (
+
+        SRC.ORDER_ID,
+        SRC.ORDER_DATE,
+        SRC.ORDER_STATUS,
+
+        SRC.CUSTOMER_ID,
+        SRC.CUSTOMER_NAME,
+        SRC.CUSTOMER_REGION,
+        SRC.CUSTOMER_SEGMENT,
+
+        SRC.SUPPLIER_ID,
+        SRC.SUPPLIER_NAME,
+        SRC.SUPPLIER_COUNTRY,
+        SRC.LEAD_TIME_DAYS,
+        SRC.PERFORMANCE_SCORE,
+
+        SRC.SHIPMENT_ID,
+        SRC.CARRIER,
+        SRC.SHIP_DATE,
+        SRC.ESTIMATED_DELIVERY,
+        SRC.DELAY_DAYS,
+
+        SRC.PRODUCT_ID,
+        SRC.PRODUCT_NAME,
+        SRC.CATEGORY,
+        SRC.QUANTITY,
+        SRC.UNIT_PRICE,
+
+        SRC.TOTAL_AMOUNT,
+        SRC.PAYMENT_STATUS,
+
+        SRC.WAREHOUSE_ID,
+        SRC.WAREHOUSE_LOCATION,
+        SRC.INVENTORY_LEVEL,
+
+        SRC.FILE_NAME,
+        SRC.FILE_ROW_NUMBER,
+        SRC.INGESTED_AT
+
+    );
+
+
+    -- ========================================================================
+    -- PART 3 - CLEANUP
+    -- ========================================================================
+
+    DROP TABLE IF EXISTS STREAM_BUFFER;
+
+
+    -- ========================================================================
+    -- PART 4 - RETURN EXECUTION RESULT
+    -- ========================================================================
+
+    RETURN
+        'sp_bronze_to_silver completed successfully. Records processed: '
+        || V_PROCESSED;
+
+
+END;
+
+$$;
+
+
+-- ============================================================================
+-- STEP 4 - VERIFY PROCEDURE
+-- ============================================================================
+
+SHOW PROCEDURES IN SCHEMA SILVER_SCH;
+
+
+-- ============================================================================
+-- STEP 5 - EXECUTE PROCEDURE
+-- ============================================================================
+
+CALL SILVER_SCH.SP_BRONZE_TO_SILVER();
+
+
+-- ============================================================================
+-- STEP 6 - VERIFY SILVER STAGING DATA
+-- ============================================================================
+
+SELECT *
+FROM SILVER_SCH.STG_ORDERS
+ORDER BY ORDER_DATE DESC;
+
+
+-- ============================================================================
+-- STEP 7 - VERIFY DEAD LETTER RECORDS
+-- ============================================================================
+
+SELECT *
+FROM SILVER_SCH.DEAD_LETTER
+ORDER BY REJECTED_AT DESC;
+
+
+-- ============================================================================
+-- STEP 8 - VALIDATION SUMMARY
+-- ============================================================================
+
+SELECT
+
+    (SELECT COUNT(*)
+     FROM SILVER_SCH.STG_ORDERS) AS SILVER_RECORDS,
+
+    (SELECT COUNT(*)
+     FROM SILVER_SCH.DEAD_LETTER) AS REJECTED_RECORDS,
+
+    (SELECT COUNT(DISTINCT ORDER_ID)
+     FROM SILVER_SCH.STG_ORDERS) AS UNIQUE_ORDERS;
+
+
+-- ============================================================================
+-- END OF SILVER LAYER SCRIPT
+-- ============================================================================
+
+
+
+CREATE OR REPLACE TASK silver_sch.bronze_to_silver_task
+    WAREHOUSE = flowbridge_pipeline_wh
+    SCHEDULE = '1 minute'
+    COMMENT = 'Task - calls sp_bronze_to_silver every minute when raw_orders_stream has data'
+WHEN SYSTEM$STREAM_HAS_DATA('silver_sch.raw_orders_stream')
+AS
+    CALL silver_sch.sp_bronze_to_silver();
+
+
+
+-- STEP 6 - RESUME TASK
+------------------------------------------------------------
+alter task silver_sch.bronze_to_silver_task resume;
+
+show tasks;
+--
+-- STEP 7 - TEST STORED PROCEDURE DIRECTLY
+
+call silver_sch.sp_bronze_to_silver();
+
+select system$stream_has_data('silver_sch.raw_orders_stream');
+
+
+SELECT COUNT(*) AS BRONZE_RECORD_COUNT
+FROM FLOWBRIDGE_DEV_DB.BRONZE_SCH.RAW_ORDERS;
+
+SHOW STREAMS IN SCHEMA FLOWBRIDGE_DEV_DB.SILVER_SCH;
+
+DESCRIBE STREAM FLOWBRIDGE_DEV_DB.SILVER_SCH.RAW_ORDERS_STREAM;
+
+SELECT
+    NAME,
+    STATE,
+    SCHEDULED_TIME,
+    COMPLETED_TIME,
+    ERROR_MESSAGE
+FROM TABLE(
+    INFORMATION_SCHEMA.TASK_HISTORY(
+        SCHEDULED_TIME_RANGE_START =>
+            DATEADD('HOUR', -2, CURRENT_TIMESTAMP())
+    )
+)
+WHERE NAME = 'BRONZE_TO_SILVER_TASK'
+ORDER BY SCHEDULED_TIME DESC;
+
+select count(*) as stg_orders_count from silver_sch.stg_orders
+union all
+select count(*) as stg_orders_count from silver_sch.dead_letter;
+
+
+
+select * from silver_sch.dead_letter;
+
+select * from silver_sch.stg_orders;
