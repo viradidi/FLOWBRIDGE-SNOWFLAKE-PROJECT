@@ -197,6 +197,7 @@ BEGIN
 
             WHEN NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
                  OR NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
+        OR NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
         OR UPPER(TRIM(s.raw_data:order_status::STRING)) NOT IN (
                      'PENDING', 'PROCESSING', 'SHIPPED', 
                      'IN TRANSIT', 'DELIVERED', 'CANCELLED'
@@ -365,6 +366,7 @@ BEGIN
               TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NOT NULL
               OR s.raw_data:order_date::STRING LIKE '__-__-____'
           )
+          AND NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NOT NULL
           AND NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NOT NULL
           AND UPPER(TRIM(s.raw_data:order_status::STRING)) IN (
               'PENDING', 'PROCESSING', 'SHIPPED', 
