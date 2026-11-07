@@ -180,8 +180,8 @@ BEGIN
 
                 THEN 'Invalid or missing order_date'
 
-            WHEN UPPER(TRIM(S.RAW_DATA:order_status::STRING))
-                NOT IN (
+            WHEN NULLIF(UPPER(TRIM(S.RAW_DATA:order_status::STRING)), '') IS NULL
+                 OR UPPER(TRIM(S.RAW_DATA:order_status::STRING)) NOT IN (
                     'PENDING',
                     'PROCESSING',
                     'SHIPPED',
@@ -246,6 +246,10 @@ BEGIN
                      || S.RAW_DATA:supplier.lead_time_days::STRING
 
 
+            WHEN NULLIF(TRIM(S.RAW_DATA:shipment.delay_days::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) IS NULL
+                THEN 'Invalid shipment delay_days'
+
             -- This order-grain model accepts exactly one product item per order.
             WHEN ARRAY_SIZE(S.RAW_DATA:items) IS NULL
                  OR ARRAY_SIZE(S.RAW_DATA:items) <> 1
@@ -300,6 +304,10 @@ BEGIN
 
             -- Warehouse level validations
 
+            WHEN NULLIF(TRIM(S.RAW_DATA:warehouse.inventory_level::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) IS NULL
+                THEN 'Invalid inventory_level value'
+
             WHEN TRY_TO_NUMBER(
                     S.RAW_DATA:warehouse.inventory_level::STRING
                  ) < 0
@@ -334,8 +342,8 @@ BEGIN
             ) IS NULL
         )
 
-        OR UPPER(TRIM(S.RAW_DATA:order_status::STRING))
-            NOT IN (
+        OR NULLIF(UPPER(TRIM(S.RAW_DATA:order_status::STRING)), '') IS NULL
+        OR UPPER(TRIM(S.RAW_DATA:order_status::STRING)) NOT IN (
                 'PENDING',
                 'PROCESSING',
                 'SHIPPED',
@@ -396,28 +404,27 @@ BEGIN
             S.RAW_DATA:items[0].quantity::STRING
         ) <= 0
 
-        OR TRY_TO_DOUBLE(
-            S.RAW_DATA:items[0].unit_price::STRING
-        ) IS NULL
+        OR TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) IS NULL
 
-        OR TRY_TO_DOUBLE(
-            S.RAW_DATA:items[0].unit_price::STRING
-        ) < 0
+        OR TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) < 0
 
 
         -- Financial level
 
-        OR TRY_TO_DOUBLE(
-            S.RAW_DATA:financials.total_amount::STRING
-        ) IS NULL
+        OR TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) IS NULL
 
-        OR TRY_TO_DOUBLE(
-            S.RAW_DATA:financials.total_amount::STRING
-        ) < 0
+        OR TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) < 0
 
 
-        -- Warehouse level
-
+        -- Shipment / warehouse numeric fields
+        OR (
+            NULLIF(TRIM(S.RAW_DATA:shipment.delay_days::STRING), '') IS NOT NULL
+            AND TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) IS NULL
+        )
+        OR (
+            NULLIF(TRIM(S.RAW_DATA:warehouse.inventory_level::STRING), '') IS NOT NULL
+            AND TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) IS NULL
+        )
         OR TRY_TO_NUMBER(
             S.RAW_DATA:warehouse.inventory_level::STRING
         ) < 0;
@@ -635,9 +642,9 @@ BEGIN
                 'CANCELLED'
             )
 
-            AND S.RAW_DATA:customer.customer_id::STRING IS NOT NULL
+            AND NULLIF(TRIM(S.RAW_DATA:customer.customer_id::STRING), '') IS NOT NULL
 
-            AND S.RAW_DATA:supplier.supplier_id::STRING IS NOT NULL
+            AND NULLIF(TRIM(S.RAW_DATA:supplier.supplier_id::STRING), '') IS NOT NULL
 
             AND TRY_TO_DOUBLE(
                 S.RAW_DATA:supplier.performance_score::STRING
@@ -651,7 +658,7 @@ BEGIN
             ) >= 0
 
             AND ARRAY_SIZE(S.RAW_DATA:items) = 1
-            AND S.RAW_DATA:items[0].product_id::STRING IS NOT NULL
+            AND NULLIF(TRIM(S.RAW_DATA:items[0].product_id::STRING), '') IS NOT NULL
 
             AND TRY_TO_NUMBER(
                 S.RAW_DATA:items[0].quantity::STRING
@@ -670,13 +677,15 @@ BEGIN
             AND TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) >= 0
 
             AND (
-                TRY_TO_NUMBER(
-                    S.RAW_DATA:warehouse.inventory_level::STRING
-                ) IS NULL
-
-                OR TRY_TO_NUMBER(
-                    S.RAW_DATA:warehouse.inventory_level::STRING
-                ) >= 0
+                NULLIF(TRIM(S.RAW_DATA:warehouse.inventory_level::STRING), '') IS NULL
+                OR (
+                    TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) IS NOT NULL
+                    AND TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) >= 0
+                )
+            )
+            AND (
+                NULLIF(TRIM(S.RAW_DATA:shipment.delay_days::STRING), '') IS NULL
+                OR TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) IS NOT NULL
             )
 
         QUALIFY ROW_NUMBER() OVER (
