@@ -387,6 +387,10 @@ BEGIN
             TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NULL
             OR TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) >= 0
         )
+QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY UPPER(TRIM(s.raw_data:order_id::STRING))
+            ORDER BY s.ingested_at DESC, s.file_name DESC, s.file_row_number DESC
+        ) = 1
 ) AS src
 ON tgt.order_id = src.order_id
 
