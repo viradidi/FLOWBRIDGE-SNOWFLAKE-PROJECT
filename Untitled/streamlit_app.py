@@ -475,7 +475,7 @@ def load_inventory(where_clause, params):
                     ELSE 0
                 END,
                 2
-            ) AS INVENTORY_TURNOVER_RATIO
+            ) AS INVENTORY_MOVEMENT_PROXY_RATIO
 
         FROM {TABLE}
 
@@ -934,7 +934,7 @@ if not df_i.empty:
 
         turnover_chart = (
             df_i.groupby("CATEGORY")[
-                "INVENTORY_TURNOVER_RATIO"
+                "INVENTORY_MOVEMENT_PROXY_RATIO"
             ]
             .mean()
             .to_frame()

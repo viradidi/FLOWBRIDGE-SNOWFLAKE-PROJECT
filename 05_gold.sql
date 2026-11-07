@@ -18,7 +18,7 @@ TO ROLE SYSADMIN;
 -- -----------------------------------------------------------------------------
 
 CREATE OR REPLACE DYNAMIC TABLE GOLD_SCH.AGG_BASE
-    TARGET_LAG = '1 minute'
+    TARGET_LAG = DOWNSTREAM
     WAREHOUSE = FLOWBRIDGE_PIPELINE_WH
     COMMENT = 'Base Dynamic Table'
 AS
@@ -175,7 +175,7 @@ select * from gold_sch.agg_supplier_performance;
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_inventory_turnover
     TARGET_LAG = '1 minute'
     WAREHOUSE = flowbridge_pipeline_wh
-    COMMENT = 'Quantity-to-average-inventory proxy by warehouse and category. DOWNSTREAM from AGG_BASE.'
+    COMMENT = 'Quantity-to-average-inventory movement proxy by warehouse and category. Leaf dynamic table drives dashboard freshness.'
 AS
 SELECT
     warehouse_id,
