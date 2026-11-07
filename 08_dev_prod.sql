@@ -1,22 +1,55 @@
+-- FLOWBRIDGE DEV -> PROD BOOTSTRAP
+-- Run against a fresh PROD environment. This is a bootstrap, not an in-place
+-- upgrade: IF NOT EXISTS protects an existing PROD schema from replacement.
+-- Use reviewed migration scripts for later releases.
+USE ROLE SYSADMIN;
+
 -- Clone Bronze schema
-CREATE OR REPLACE SCHEMA flowbridge_prod_db.bronze_sch
+CREATE SCHEMA IF NOT EXISTS flowbridge_prod_db.bronze_sch
     CLONE flowbridge_dev_db.bronze_sch;
 
 -- Clone Silver schema
 -- Clone Silver schema
-CREATE OR REPLACE SCHEMA flowbridge_prod_db.silver_sch
+CREATE SCHEMA IF NOT EXISTS flowbridge_prod_db.silver_sch
     CLONE flowbridge_dev_db.silver_sch;
 
 -- Clone Gold schema
-CREATE OR REPLACE SCHEMA flowbridge_prod_db.gold_sch
+CREATE SCHEMA IF NOT EXISTS flowbridge_prod_db.gold_sch
     CLONE flowbridge_dev_db.gold_sch;
 
 -- Clone Serving schema
-CREATE OR REPLACE SCHEMA flowbridge_prod_db.serving_sch
+CREATE SCHEMA IF NOT EXISTS flowbridge_prod_db.serving_sch
     CLONE flowbridge_dev_db.serving_sch;
 
 show schemas in database flowbridge_dev_db;
 
+
+-- Rebind serving contracts to PROD after cloning. This avoids any cloned
+-- secure view accidentally continuing to reference DEV-layer objects.
+CREATE OR REPLACE SECURE VIEW FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_SUPPLY_CHAIN_OVERVIEW AS
+SELECT
+    order_id, order_date, order_status, payment_status,
+    quantity, unit_price, total_amount, delay_days, inventory_level, ingested_at,
+    customer_id, customer_name, customer_region, customer_segment,
+    product_id, product_name, category,
+    supplier_id, supplier_name, supplier_country, lead_time_days, performance_score,
+    warehouse_id, warehouse_location, shipment_id, carrier, ship_date, estimated_delivery
+FROM FLOWBRIDGE_PROD_DB.GOLD_SCH.AGG_BASE;
+
+CREATE OR REPLACE SECURE VIEW FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_ORDER_FULFILLMENT AS
+SELECT * FROM FLOWBRIDGE_PROD_DB.GOLD_SCH.AGG_ORDER_FULFILLMENT;
+CREATE OR REPLACE SECURE VIEW FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_SUPPLIER_PERFORMANCE AS
+SELECT * FROM FLOWBRIDGE_PROD_DB.GOLD_SCH.AGG_SUPPLIER_PERFORMANCE;
+CREATE OR REPLACE SECURE VIEW FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_INVENTORY_TURNOVER AS
+SELECT * FROM FLOWBRIDGE_PROD_DB.GOLD_SCH.AGG_INVENTORY_TURNOVER;
+CREATE OR REPLACE SECURE VIEW FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_SHIPMENT_DELAYS AS
+SELECT * FROM FLOWBRIDGE_PROD_DB.GOLD_SCH.AGG_SHIPMENT_DELAYS;
+
+GRANT USAGE ON WAREHOUSE FLOWBRIDGE_ANALYTICS_WH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT USAGE ON DATABASE FLOWBRIDGE_PROD_DB TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT USAGE ON SCHEMA FLOWBRIDGE_PROD_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT SELECT ON ALL VIEWS IN SCHEMA FLOWBRIDGE_PROD_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT SELECT ON FUTURE VIEWS IN SCHEMA FLOWBRIDGE_PROD_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
 
 -- Grant ownership of PROD schemas to SYSADMIN
 GRANT OWNERSHIP ON SCHEMA flowbridge_prod_db.bronze_sch TO ROLE sysadmin COPY CURRENT GRANTS;
@@ -56,7 +89,7 @@ USE SCHEMA BRONZE_SCH;
 USE WAREHOUSE FLOWBRIDGE_PIPELINE_WH;
 
 -- Create PROD external stage
-CREATE OR REPLACE STAGE BRONZE_SCH.ADLS_RAW_STAGE_PROD
+CREATE STAGE IF NOT EXISTS BRONZE_SCH.ADLS_RAW_STAGE_PROD
     URL = 'azure://storageflowbridge.blob.core.windows.net/supply-chain-raw-prod/'
     STORAGE_INTEGRATION = FLOWBRIDGE_ADLS_INTEGRATION
     FILE_FORMAT = BRONZE_SCH.JSON_FILE_FORMAT
@@ -85,7 +118,9 @@ from (
 ) file_format = (format_name = 'bronze_sch.json_file_format');
 
 
-drop pipe FLOWBRIDGE_PROD_DB.BRONZE_SCH.SUPPLY_CHAIN_PIPE;
+-- The clone contains the DEV pipe definition. Remove only that cloned DEV pipe;
+-- the following SUPPLY_CHAIN_PIPE_PROD object remains in place.
+DROP PIPE IF EXISTS FLOWBRIDGE_PROD_DB.BRONZE_SCH.SUPPLY_CHAIN_PIPE;
 
 select system$pipe_status('FLOWBRIDGE_PROD_DB.BRONZE_SCH.SUPPLY_CHAIN_PIPE_PROD');
 
@@ -120,8 +155,15 @@ BEGIN
     -- We materialise it here so both DEAD LETTER and MERGE
     -- can read from the same snapshot.
     ---------------------------------------------------------------------------
-    CREATE OR REPLACE TEMPORARY TABLE flowbridge_prod_db.silver_sch.stream_buffer AS
-    SELECT *
+    -- Create the temporary buffer before beginning the transaction.
+    -- The INSERT consumes the stream in the same transaction as DLQ + staging DML.
+    CREATE OR REPLACE TEMPORARY TABLE flowbridge_prod_db.silver_sch.stream_buffer
+        LIKE flowbridge_prod_db.bronze_sch.raw_orders;
+    BEGIN TRANSACTION;
+    INSERT INTO flowbridge_prod_db.silver_sch.stream_buffer (
+        raw_data, ingested_at, file_name, file_row_number, load_id
+    )
+    SELECT raw_data, ingested_at, file_name, file_row_number, load_id
     FROM flowbridge_prod_db.silver_sch.raw_orders_stream
     WHERE metadata$action = 'INSERT';
 
@@ -176,21 +218,25 @@ BEGIN
             WHEN s.raw_data:supplier.lead_time_days::NUMBER < 0
                 THEN 'Invalid lead_time_days < 0: ' || s.raw_data:supplier.lead_time_days::STRING
 
+            -- This order-grain model supports exactly one product per order.
+            WHEN ARRAY_SIZE(s.raw_data:items) IS NULL
+                 OR ARRAY_SIZE(s.raw_data:items) <> 1
+                THEN 'Expected exactly one item in items array'
             -- Product level validations
-            WHEN s.raw_data:items.product_id::STRING IS NULL
+            WHEN s.raw_data:items[0].product_id::STRING IS NULL
                 THEN 'Missing product_id'
 
-            WHEN s.raw_data:items.quantity::NUMBER IS NULL
-                 OR s.raw_data:items.quantity::NUMBER <= 0
-                THEN 'Invalid quantity: ' || COALESCE(s.raw_data:items.quantity::STRING, 'NULL')
+            WHEN s.raw_data:items[0].quantity::NUMBER IS NULL
+                 OR s.raw_data:items[0].quantity::NUMBER <= 0
+                THEN 'Invalid quantity: ' || COALESCE(s.raw_data:items[0].quantity::STRING, 'NULL')
 
-            WHEN s.raw_data:items.unit_price::FLOAT IS NULL
-                 OR s.raw_data:items.unit_price::FLOAT < 0
-                THEN 'Invalid unit_price: ' || COALESCE(s.raw_data:items.unit_price::STRING, 'NULL')
+            WHEN TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NULL
+                 OR TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) < 0
+                THEN 'Invalid unit_price: ' || COALESCE(s.raw_data:items[0].unit_price::STRING, 'NULL')
 
             -- Financial level validations
-            WHEN s.raw_data:financials.total_amount::FLOAT IS NULL
-                 OR s.raw_data:financials.total_amount::FLOAT < 0
+            WHEN TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NULL
+                 OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) < 0
                 THEN 'Invalid total_amount: ' || COALESCE(s.raw_data:financials.total_amount::STRING, 'NULL')
 
             -- Warehouse level validations
@@ -221,14 +267,16 @@ BEGIN
         OR s.raw_data:supplier.performance_score::FLOAT < 0
         OR s.raw_data:supplier.lead_time_days::NUMBER < 0
         -- Product Level
-        OR s.raw_data:items.product_id::STRING IS NULL
-        OR s.raw_data:items.quantity::NUMBER IS NULL
-        OR s.raw_data:items.quantity::NUMBER <= 0
-        OR s.raw_data:items.unit_price::FLOAT IS NULL
-        OR s.raw_data:items.unit_price::FLOAT < 0
+        OR ARRAY_SIZE(s.raw_data:items) IS NULL
+        OR ARRAY_SIZE(s.raw_data:items) <> 1
+        OR s.raw_data:items[0].product_id::STRING IS NULL
+        OR s.raw_data:items[0].quantity::NUMBER IS NULL
+        OR s.raw_data:items[0].quantity::NUMBER <= 0
+        OR TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NULL
+        OR TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) < 0
         -- Financial Level
-        OR s.raw_data:financials.total_amount::FLOAT IS NULL
-        OR s.raw_data:financials.total_amount::FLOAT < 0
+        OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NULL
+        OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) < 0
         -- Warehouse Level
         OR s.raw_data:warehouse.inventory_level::NUMBER < 0
     );
@@ -263,31 +311,31 @@ BEGIN
             UPPER(TRIM(s.raw_data:supplier.supplier_id::STRING)) AS supplier_id,
             COALESCE(UPPER(TRIM(s.raw_data:supplier.supplier_name::STRING)), 'UNKNOWN') AS supplier_name,
             COALESCE(UPPER(TRIM(s.raw_data:supplier.country::STRING)), 'UNKNOWN') AS supplier_country,
-            COALESCE(s.raw_data:supplier.lead_time_days::NUMBER, 0) AS lead_time_days,
-            COALESCE(s.raw_data:supplier.performance_score::FLOAT, 0) AS performance_score,
+            TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) AS lead_time_days,
+            TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) AS performance_score,
 
             -- Shipment fields
             COALESCE(UPPER(TRIM(s.raw_data:shipment.shipment_id::STRING)), 'UNKNOWN') AS shipment_id,
             COALESCE(UPPER(TRIM(s.raw_data:shipment.carrier::STRING)), 'UNKNOWN') AS carrier,
             TRY_TO_TIMESTAMP_NTZ(s.raw_data:shipment.ship_date::STRING) AS ship_date,
             TRY_TO_DATE(s.raw_data:shipment.estimated_delivery::STRING) AS estimated_delivery,
-            GREATEST(COALESCE(s.raw_data:shipment.delay_days::NUMBER, 0), 0) AS delay_days,
+            TRY_TO_NUMBER(s.raw_data:shipment.delay_days::STRING) AS delay_days,
 
             -- Product fields (items array)
-            UPPER(TRIM(s.raw_data:items.product_id::STRING)) AS product_id,
+            UPPER(TRIM(s.raw_data:items[0].product_id::STRING)) AS product_id,
             COALESCE(UPPER(TRIM(s.raw_data:items.product_name::STRING)), 'UNKNOWN') AS product_name,
             COALESCE(UPPER(TRIM(s.raw_data:items.category::STRING)), 'UNKNOWN') AS category,
-            s.raw_data:items.quantity::NUMBER AS quantity,
-            s.raw_data:items.unit_price::FLOAT AS unit_price,
+            s.raw_data:items[0].quantity::NUMBER AS quantity,
+            TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) AS unit_price,
 
             -- Financial fields
-            s.raw_data:financials.total_amount::FLOAT AS total_amount,
+            TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) AS total_amount,
             COALESCE(UPPER(TRIM(s.raw_data:financials.payment_status::STRING)), 'UNKNOWN') AS payment_status,
 
             -- Warehouse fields
             COALESCE(UPPER(TRIM(s.raw_data:warehouse.warehouse_id::STRING)), 'UNKNOWN') AS warehouse_id,
             COALESCE(UPPER(TRIM(s.raw_data:warehouse.warehouse_location::STRING)), 'UNKNOWN') AS warehouse_location,
-            COALESCE(s.raw_data:warehouse.inventory_level::NUMBER, 0) AS inventory_level,
+            TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) AS inventory_level,
 
             -- Metadata
             s.file_name,
@@ -310,13 +358,13 @@ BEGIN
               s.raw_data:supplier.lead_time_days::NUMBER IS NULL
               OR s.raw_data:supplier.lead_time_days::NUMBER >= 0
           )
-          AND s.raw_data:items.product_id::STRING IS NOT NULL
-          AND s.raw_data:items.quantity::NUMBER IS NOT NULL
-                  AND s.raw_data:items.quantity::NUMBER > 0
-        AND s.raw_data:items.unit_price::FLOAT IS NOT NULL
-        AND s.raw_data:items.unit_price::FLOAT >= 0
-        AND s.raw_data:financials.total_amount::FLOAT IS NOT NULL
-        AND s.raw_data:financials.total_amount::FLOAT >= 0
+          AND s.raw_data:items[0].product_id::STRING IS NOT NULL
+          AND s.raw_data:items[0].quantity::NUMBER IS NOT NULL
+                  AND s.raw_data:items[0].quantity::NUMBER > 0
+        AND TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NOT NULL
+        AND TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) >= 0
+        AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NOT NULL
+        AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) >= 0
         AND (
             s.raw_data:warehouse.inventory_level::NUMBER IS NULL
             OR s.raw_data:warehouse.inventory_level::NUMBER >= 0
@@ -407,6 +455,7 @@ WHEN NOT MATCHED THEN
         src.ingested_at
     );
 
+COMMIT;
 DROP TABLE IF EXISTS flowbridge_prod_db.silver_sch.stream_buffer;
 
 RETURN 'sp_bronze_to_silver completed successfully';
@@ -424,8 +473,11 @@ BEGIN
     -- =========================================================================
     -- Part 1 - TEMP TABLE
     -- =========================================================================
-    CREATE OR REPLACE TEMPORARY TABLE flowbridge_prod_db.silver_sch.tmp_stream_data AS
-    SELECT * 
+    CREATE OR REPLACE TEMPORARY TABLE flowbridge_prod_db.silver_sch.tmp_stream_data
+        LIKE flowbridge_prod_db.silver_sch.stg_orders;
+    BEGIN TRANSACTION;
+    INSERT INTO flowbridge_prod_db.silver_sch.tmp_stream_data (ORDER_ID, ORDER_DATE, ORDER_STATUS, CUSTOMER_ID, CUSTOMER_NAME, CUSTOMER_REGION, CUSTOMER_SEGMENT, SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_COUNTRY, LEAD_TIME_DAYS, PERFORMANCE_SCORE, SHIPMENT_ID, CARRIER, SHIP_DATE, ESTIMATED_DELIVERY, DELAY_DAYS, PRODUCT_ID, PRODUCT_NAME, CATEGORY, QUANTITY, UNIT_PRICE, TOTAL_AMOUNT, PAYMENT_STATUS, WAREHOUSE_ID, WAREHOUSE_LOCATION, INVENTORY_LEVEL, FILE_NAME, FILE_ROW_NUMBER, INGESTED_AT, TRANSFORMED_AT)
+    SELECT ORDER_ID, ORDER_DATE, ORDER_STATUS, CUSTOMER_ID, CUSTOMER_NAME, CUSTOMER_REGION, CUSTOMER_SEGMENT, SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_COUNTRY, LEAD_TIME_DAYS, PERFORMANCE_SCORE, SHIPMENT_ID, CARRIER, SHIP_DATE, ESTIMATED_DELIVERY, DELAY_DAYS, PRODUCT_ID, PRODUCT_NAME, CATEGORY, QUANTITY, UNIT_PRICE, TOTAL_AMOUNT, PAYMENT_STATUS, WAREHOUSE_ID, WAREHOUSE_LOCATION, INVENTORY_LEVEL, FILE_NAME, FILE_ROW_NUMBER, INGESTED_AT, TRANSFORMED_AT
     FROM flowbridge_prod_db.silver_sch.stg_orders_stream
     WHERE metadata$action = 'INSERT';
 
@@ -441,7 +493,7 @@ BEGIN
             UPPER(customer_region)  AS customer_region,
             UPPER(customer_segment) AS customer_segment
         FROM flowbridge_prod_db.silver_sch.tmp_stream_data
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(customer_id) ORDER BY order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(customer_id) ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC) = 1
     ) AS src
     ON tgt.customer_id = src.customer_id
     
@@ -479,7 +531,7 @@ BEGIN
             UPPER(category)     AS category,
             unit_price
         FROM flowbridge_prod_db.silver_sch.tmp_stream_data
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(product_id) ORDER BY order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(product_id) ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC) = 1
     ) AS src
     ON tgt.product_id = src.product_id
     
@@ -518,7 +570,7 @@ BEGIN
             lead_time_days,
             performance_score
         FROM flowbridge_prod_db.silver_sch.tmp_stream_data
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(supplier_id) ORDER BY order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(supplier_id) ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC) = 1
     ) AS src
     ON tgt.supplier_id = src.supplier_id
     
@@ -557,7 +609,7 @@ BEGIN
             UPPER(warehouse_id)       AS warehouse_id,
             UPPER(warehouse_location) AS warehouse_location
         FROM flowbridge_prod_db.silver_sch.tmp_stream_data
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(warehouse_id) ORDER BY order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(warehouse_id) ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC) = 1
     ) AS src
     ON tgt.warehouse_id = src.warehouse_id
     
@@ -590,7 +642,7 @@ BEGIN
             estimated_delivery
         FROM flowbridge_prod_db.silver_sch.tmp_stream_data
         WHERE UPPER(shipment_id) != 'UNKNOWN'
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(shipment_id) ORDER BY order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(shipment_id) ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC) = 1
     ) AS src
     ON tgt.shipment_id = src.shipment_id
     
@@ -644,7 +696,7 @@ BEGIN
         INNER JOIN flowbridge_prod_db.silver_sch.dim_supplier ds  ON ds.supplier_id  = UPPER(s.supplier_id)
         INNER JOIN flowbridge_prod_db.silver_sch.dim_warehouse dw ON dw.warehouse_id = UPPER(s.warehouse_id)
         LEFT JOIN flowbridge_prod_db.silver_sch.dim_shipment dsh  ON dsh.shipment_id = UPPER(s.shipment_id)
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(s.order_id) ORDER BY s.order_date DESC) = 1
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY UPPER(s.order_id) ORDER BY s.order_date DESC, s.ingested_at DESC, s.file_name DESC, s.file_row_number DESC) = 1
     ) AS src
     ON tgt.order_id = src.order_id
     
@@ -705,6 +757,7 @@ BEGIN
     -- =========================================================================
     -- Cleanup temp table - no longer needed after all MERGEs
     -- =========================================================================
+    COMMIT;
     DROP TABLE IF EXISTS flowbridge_prod_db.silver_sch.tmp_stream_data;
 
     RETURN 'sp_silver_to_star completed successfully';
@@ -713,34 +766,24 @@ END;
 
 
 
+
 -- Bronze to Silver task
 CREATE OR REPLACE TASK flowbridge_prod_db.silver_sch.bronze_to_silver_task
     WAREHOUSE = flowbridge_pipeline_wh
     SCHEDULE  = '1 minute'
     COMMENT   = 'Task - calls sp_bronze_to_silver every minute when raw_orders_stream has data'
-WHEN SYSTEM$STREAM_HAS_DATA('silver_sch.raw_orders_stream')
+WHEN SYSTEM$STREAM_HAS_DATA('FLOWBRIDGE_PROD_DB.SILVER_SCH.RAW_ORDERS_STREAM')
 AS
-    CALL silver_sch.sp_bronze_to_silver();
-
-
-            
--- Bronze to Silver task
-CREATE OR REPLACE TASK flowbridge_prod_db.silver_sch.bronze_to_silver_task
-    WAREHOUSE = flowbridge_pipeline_wh
-    SCHEDULE  = '1 minute'
-    COMMENT   = 'Task - calls sp_bronze_to_silver every minute when raw_orders_stream has data'
-WHEN SYSTEM$STREAM_HAS_DATA('flowbridge_prod_db.silver_sch.raw_orders_stream')
-AS
-    CALL silver_sch.sp_bronze_to_silver();
+    CALL flowbridge_prod_db.silver_sch.sp_bronze_to_silver();
 
 
 -- Silver to Star task
 CREATE OR REPLACE TASK flowbridge_prod_db.silver_sch.silver_to_star_task
     WAREHOUSE = flowbridge_pipeline_wh
     SCHEDULE  = '1 minute'
-WHEN SYSTEM$STREAM_HAS_DATA('flowbridge_prod_db.silver_sch.stg_orders_stream')
+WHEN SYSTEM$STREAM_HAS_DATA('FLOWBRIDGE_PROD_DB.SILVER_SCH.STG_ORDERS_STREAM')
 AS
-    CALL silver_sch.sp_silver_to_star();
+    CALL flowbridge_prod_db.silver_sch.silver_to_star();
 
 
 
@@ -788,7 +831,7 @@ IF (EXISTS (
 ))
 THEN CALL system$send_email(
     'email_notification_int',
-    'briankeya043@gmail.com',
+    '<VERIFIED_ACCOUNT_USER_EMAIL>',
     'Pipeline Alert! - Flowbridge Project!',
     'Something went wrong in the pipeline. Check Bronze/Silver/Gold Layers for failures. Login to Snowsight -> Monitoring -> History / Copy History'
 );
@@ -832,21 +875,16 @@ show grants on share flowbridge_prod_share;
 
 
 
--- ⚠️ Run these in your session BEFORE executing the CREATE below (do NOT save passwords in files):
-SET reader_admin_name = 'flowbridge_admin';
-SET reader_admin_password = 'YourStrongPassword123!';
-
-CREATE MANAGED ACCOUNT IF NOT EXISTS flowbridge_partner_account
-    ADMIN_NAME = $reader_admin_name
-    ADMIN_PASSWORD = $reader_admin_password
-    TYPE = READER
-    COMMENT = 'Reader Account for Flowbridge Logistics Partners - access to PROD KPI only';
-
--- Get reader account details
-SHOW MANAGED ACCOUNTS;
-
-alter share flowbridge_prod_share
- add accounts = "IF53590";
+-- OPTIONAL reader-account provisioning: execute only from a private, controlled
+-- deployment session. Supply the password interactively; never commit it or
+-- the resulting account locator to Git.
+-- CREATE MANAGED ACCOUNT flowbridge_partner_account
+--     ADMIN_NAME = '<READER_ADMIN_NAME>'
+--     ADMIN_PASSWORD = '<SUPPLY_SECURELY_IN_SNOWSIGHT>'
+--     TYPE = READER
+--     COMMENT = 'Reader account for FlowBridge logistics partners';
+-- SHOW MANAGED ACCOUNTS;
+-- ALTER SHARE flowbridge_prod_share ADD ACCOUNTS = '<READER_ACCOUNT_LOCATOR>';
 
 
 
