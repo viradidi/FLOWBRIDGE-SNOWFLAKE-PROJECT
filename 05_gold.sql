@@ -200,7 +200,7 @@ SELECT
         SUM(quantity) 
         / NULLIF(AVG(inventory_level), 0), 
         2
-    ) as inventory_turnover_ratio
+    ) as inventory_movement_proxy_ratio
 FROM gold_sch.agg_base
 GROUP BY 
     warehouse_id,

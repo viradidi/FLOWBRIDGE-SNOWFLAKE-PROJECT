@@ -75,7 +75,7 @@ SELECT
     min_inventory_level,
     max_inventory_level,
     total_revenue,
-    inventory_turnover_ratio
+    inventory_movement_proxy_ratio
 FROM 
     GOLD_SCH.AGG_INVENTORY_TURNOVER;
 
