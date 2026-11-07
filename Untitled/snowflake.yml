@@ -1,0 +1,25 @@
+definition_version: 2
+entities:
+  streamlit_app:
+    type: streamlit
+    meta:
+      use_mixins:
+        - streamlit_shared
+    identifier:
+      name: XPMRI8OAIW56LPNV
+      database: FLOWBRIDGE_PROD_DB
+      schema: SERVING_SCH
+mixins:
+  streamlit_shared:
+    artifacts:
+      - pyproject.toml
+      - streamlit_app.py
+      - .streamlit/config.toml
+    title: Untitled
+    query_warehouse: FLOWBRIDGE_ANALYTICS_WH
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    grants:
+      - privilege: USAGE
+        role: ACCOUNTADMIN
+        with_grant_option: true
+    main_file: streamlit_app.py
