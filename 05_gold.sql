@@ -90,7 +90,7 @@ LEFT JOIN SILVER_SCH.DIM_SHIPMENT AS sh
 select * from GOLD_SCH.AGG_BASE;
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_order_fulfillment
-    TARGET_LAG = DOWNSTREAM
+    TARGET_LAG = '1 minute'
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Order fulfillment KPIs by customer region. DOWNSTREAM from AGG_BASE.'
 AS
@@ -129,7 +129,7 @@ select * from gold_sch.agg_order_fulfillment;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_supplier_performance
-    TARGET_LAG = DOWNSTREAM
+    TARGET_LAG = '1 minute'
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Supplier performance KPIs. DOWNSTREAM from AGG_BASE.'
 AS
@@ -173,7 +173,7 @@ select * from gold_sch.agg_supplier_performance;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_inventory_turnover
-    TARGET_LAG = DOWNSTREAM
+    TARGET_LAG = '1 minute'
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Quantity-to-average-inventory proxy by warehouse and category. DOWNSTREAM from AGG_BASE.'
 AS
@@ -212,7 +212,7 @@ select * from gold_sch.agg_inventory_turnover;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_shipment_delays
-    TARGET_LAG = DOWNSTREAM
+    TARGET_LAG = '1 minute'
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Shipment delay KPIs by carrier. DOWNSTREAM from AGG_BASE. Only shipped orders included.'
 AS
