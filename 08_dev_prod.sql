@@ -192,7 +192,7 @@ BEGIN
                 THEN 'Missing order_id'
 
             WHEN TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NULL
-                 AND s.raw_data:order_date::STRING NOT LIKE '__-__-____'
+                 AND TRY_TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY') IS NULL
                 THEN 'Invalid or missing order_date'
 
             WHEN NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
@@ -313,7 +313,7 @@ BEGIN
             UPPER(TRIM(s.raw_data:order_id::STRING)) AS order_id,
             TRY_TO_TIMESTAMP_NTZ(
                 CASE
-                    WHEN s.raw_data:order_date::STRING LIKE '__-__-____'
+                    WHEN TRY_TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY') IS NOT NULL
                         THEN TO_VARCHAR(TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY'), 'YYYY-MM-DD') || 'T00:00:00Z'
                     ELSE s.raw_data:order_date::STRING
                 END
@@ -364,9 +364,8 @@ BEGIN
         WHERE NULLIF(TRIM(s.raw_data:order_id::STRING), '') IS NOT NULL
           AND (
               TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NOT NULL
-              OR s.raw_data:order_date::STRING LIKE '__-__-____'
+              OR TRY_TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY') IS NOT NULL
           )
-          AND NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NOT NULL
           AND NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NOT NULL
           AND UPPER(TRIM(s.raw_data:order_status::STRING)) IN (
               'PENDING', 'PROCESSING', 'SHIPPED', 
@@ -386,8 +385,15 @@ BEGIN
         AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NOT NULL
         AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) >= 0
         AND (
-            TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NULL
-            OR TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) >= 0
+            NULLIF(TRIM(s.raw_data:warehouse.inventory_level::STRING), '') IS NULL
+            OR (
+                TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NOT NULL
+                AND TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) >= 0
+            )
+        )
+        AND (
+            NULLIF(TRIM(s.raw_data:shipment.delay_days::STRING), '') IS NULL
+            OR TRY_TO_NUMBER(s.raw_data:shipment.delay_days::STRING) IS NOT NULL
         )
 QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(TRIM(s.raw_data:order_id::STRING))
