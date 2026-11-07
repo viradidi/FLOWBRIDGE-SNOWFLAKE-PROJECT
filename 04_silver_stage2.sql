@@ -551,7 +551,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(s.order_id)
-            ORDER BY s.order_date DESC
+            ORDER BY s.order_date DESC, s.ingested_at DESC, s.file_name DESC, s.file_row_number DESC
         ) = 1
 
     ) AS src

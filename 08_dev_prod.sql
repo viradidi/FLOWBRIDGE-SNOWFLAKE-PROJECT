@@ -314,7 +314,7 @@ BEGIN
             TRY_TO_TIMESTAMP_NTZ(
                 CASE
                     WHEN TRY_TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY') IS NOT NULL
-                        THEN TO_VARCHAR(TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY'), 'YYYY-MM-DD') || 'T00:00:00Z'
+                        THEN TO_VARCHAR(TO_DATE(s.raw_data:order_date::STRING, 'DD-MM-YYYY'), 'YYYY-MM-DD') || 'T00:00:00'
                     ELSE s.raw_data:order_date::STRING
                 END
             ) AS order_date,
