@@ -1,4 +1,3 @@
-```sql
 -- -----------------------------------------------------------------------------
 -- FLOWBRIDGE - GOLD LAYER
 -- Purpose: Create Gold aggregation base dynamic table
@@ -91,7 +90,7 @@ LEFT JOIN SILVER_SCH.DIM_SHIPMENT AS sh
 select * from GOLD_SCH.AGG_BASE;
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_order_fulfillment
-    LAG = DOWNSTREAM
+    TARGET_LAG = DOWNSTREAM
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Order fulfillment KPIs by customer region. DOWNSTREAM from AGG_BASE.'
 AS
@@ -130,7 +129,7 @@ select * from gold_sch.agg_order_fulfillment;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_supplier_performance
-    LAG = DOWNSTREAM
+    TARGET_LAG = DOWNSTREAM
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Supplier performance KPIs. DOWNSTREAM from AGG_BASE.'
 AS
@@ -151,13 +150,13 @@ SELECT
     ROUND(AVG(total_amount), 2) as avg_order_value,
     
     -- Delay metrics
-    COUNT(CASE WHEN delay_days = 0 THEN 1 END) as on_time_orders,
-    COUNT(CASE WHEN delay_days > 0 THEN 1 END) as delayed_orders,
+    COUNT(CASE WHEN delay_days <= 0 AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END) as on_time_orders,
+    COUNT(CASE WHEN delay_days > 0 AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END) as delayed_orders,
     
     -- On time rate
     ROUND(
-        COUNT(CASE WHEN delay_days = 0 THEN 1 END) 
-        / NULLIF(COUNT(order_id), 0) * 100, 
+        COUNT(CASE WHEN delay_days <= 0 AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END)
+        / NULLIF(COUNT(CASE WHEN delay_days IS NOT NULL AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END), 0) * 100, 
         2
     ) as on_time_rate_pct,
     
@@ -174,9 +173,9 @@ select * from gold_sch.agg_supplier_performance;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_inventory_turnover
-    LAG = DOWNSTREAM
+    TARGET_LAG = DOWNSTREAM
     WAREHOUSE = flowbridge_pipeline_wh
-    COMMENT = 'Inventory turnover KPIs by warehouse and category. DOWNSTREAM from AGG_BASE.'
+    COMMENT = 'Quantity-to-average-inventory proxy by warehouse and category. DOWNSTREAM from AGG_BASE.'
 AS
 SELECT
     warehouse_id,
@@ -195,8 +194,8 @@ SELECT
     -- Revenue
     ROUND(SUM(total_amount), 2) as total_revenue,
     
-    -- Inventory turnover ratio
-    -- Higher = faster moving inventory
+    -- Inventory movement proxy (not accounting COGS / average inventory).
+    -- Higher values indicate more ordered units per average on-hand unit.
     ROUND(
         SUM(quantity) 
         / NULLIF(AVG(inventory_level), 0), 
@@ -213,7 +212,7 @@ select * from gold_sch.agg_inventory_turnover;
 
 
 CREATE OR REPLACE DYNAMIC TABLE gold_sch.agg_shipment_delays
-    LAG = DOWNSTREAM
+    TARGET_LAG = DOWNSTREAM
     WAREHOUSE = flowbridge_pipeline_wh
     COMMENT = 'Shipment delay KPIs by carrier. DOWNSTREAM from AGG_BASE. Only shipped orders included.'
 AS
@@ -223,13 +222,13 @@ SELECT
     
     -- Shipment counts
     COUNT(order_id) as total_shipments,
-    COUNT(CASE WHEN delay_days = 0 THEN 1 END) as on_time_shipments,
+    COUNT(CASE WHEN delay_days <= 0 THEN 1 END) as on_time_shipments,
     COUNT(CASE WHEN delay_days > 0 THEN 1 END) as delayed_shipments,
     
     -- On time rate
     ROUND(
-        COUNT(CASE WHEN delay_days = 0 THEN 1 END) 
-        / NULLIF(COUNT(order_id), 0) * 100, 
+        COUNT(CASE WHEN delay_days <= 0 AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END)
+        / NULLIF(COUNT(CASE WHEN delay_days IS NOT NULL AND shipment_id IS NOT NULL AND shipment_id <> 'UNKNOWN' THEN 1 END), 0) * 100, 
         2
     ) as on_time_rate_pct,
     
@@ -243,6 +242,7 @@ FROM gold_sch.agg_base
 -- Only include shipped orders
 -- NULL SHIPMENT_ID = order not yet shipped
 WHERE shipment_id IS NOT NULL
+  AND shipment_id <> 'UNKNOWN'
 GROUP BY 
     carrier,
     customer_region;

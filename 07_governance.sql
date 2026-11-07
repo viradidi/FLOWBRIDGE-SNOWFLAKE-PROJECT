@@ -1,5 +1,14 @@
 -- ENVIRONMENT SETUP
 USE ROLE accountadmin;
+
+-- Dedicated least-privilege role for dashboard consumers.
+CREATE ROLE IF NOT EXISTS FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT USAGE ON WAREHOUSE FLOWBRIDGE_ANALYTICS_WH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT USAGE ON DATABASE FLOWBRIDGE_DEV_DB TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT USAGE ON SCHEMA FLOWBRIDGE_DEV_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT SELECT ON ALL VIEWS IN SCHEMA FLOWBRIDGE_DEV_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+GRANT SELECT ON FUTURE VIEWS IN SCHEMA FLOWBRIDGE_DEV_DB.SERVING_SCH TO ROLE FLOWBRIDGE_ANALYTICS_ROLE;
+
 USE DATABASE flowbridge_dev_db;
 USE WAREHOUSE flowbridge_pipeline_wh;
 
@@ -9,17 +18,9 @@ CREATE NOTIFICATION INTEGRATION IF NOT EXISTS email_notification_int
     ENABLED = TRUE
     COMMENT = 'Email Notification Integration for pipeline health alerts';
 
--- Test email - verify integration is working
-SELECT SYSTEM$START_USER_EMAIL_VERIFICATION(
-    '"briankeya043"'
-);
-
-CALL SYSTEM$SEND_EMAIL(
-    'EMAIL_NOTIFICATION_INT',
-    'briankeya043@gmail.com',
-    'Flowbridge Pipeline Test',
-    'Flowbridge email notification integration is working.'
-);
+-- Verify the intended recipient in Snowsight before enabling this alert.
+-- Replace the explicit placeholder in the alert action below with a verified
+-- Snowflake account-user email during deployment. Never commit personal addresses.
 
 
 CREATE OR REPLACE ALERT bronze_sch.pipeline_health_alert
@@ -56,7 +57,7 @@ IF (EXISTS (
 ))
 THEN CALL SYSTEM$SEND_EMAIL(
     'email_notification_int',
-    'briankeya043@gmail.com',
+    '<VERIFIED_ACCOUNT_USER_EMAIL>',
     'Pipeline Alert! - Flowbridge Project!',
     'Something went wrong in the pipeline. Check Bronze/Silver/Gold Layers for failures. Login to snowsight -> monitoring -> History / Copy History'
 );
@@ -65,7 +66,7 @@ THEN CALL SYSTEM$SEND_EMAIL(
 alter alert bronze_sch.pipeline_health_alert resume;
 
 
-show alerts in datatabase flowbridge_dev_db;
+show alerts in database flowbridge_dev_db;
 
 -- Check alert history
 SELECT 

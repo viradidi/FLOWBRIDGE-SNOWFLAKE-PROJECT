@@ -7,10 +7,10 @@
 # If a package repository server is not reachable and the pyproject.toml file has not been modified, the app will fall back to the default version of the Streamlit library.
 
 [project]
-name = "streamlit-app"
+name = "flowbridge-dashboard"
 requires-python = "~=3.11.0"
 version = "0.0.1"
-description = ""
+description = "Streamlit dashboard for FlowBridge supply-chain analytics"
 dependencies = [
     "streamlit[snowflake]"
 ]

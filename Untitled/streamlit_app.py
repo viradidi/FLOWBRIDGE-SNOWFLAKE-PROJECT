@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from datetime import datetime, timedelta
-from snowflake.snowpark.context import get_active_session
+# Container-runtime-safe Snowflake connection.
 
 
 # ================================================================
@@ -16,10 +16,10 @@ st.set_page_config(
     layout="wide"
 )
 
-session = get_active_session()
+session = st.connection("snowflake").session()
 
 DATABASE = "FLOWBRIDGE_PROD_DB"
-TABLE = f"{DATABASE}.GOLD_SCH.AGG_BASE"
+TABLE = f"{DATABASE}.SERVING_SCH.VW_SUPPLY_CHAIN_OVERVIEW"
 
 st.title("📦 FlowBridge Dashboard")
 st.caption("Supply Chain Analytics and Performance Monitoring")
@@ -156,7 +156,7 @@ status_mapping = {
     "PENDING": "PENDING",
     "PROCESSING": "PROCESSING",
     "SHIPPED": "SHIPPED",
-    "IN TRANSIT": "IN_TRANSIT",
+    "IN TRANSIT": "IN TRANSIT",
     "DELIVERED": "DELIVERED",
     "CANCELLED": "CANCELLED"
 }
@@ -235,7 +235,7 @@ with col_filter4:
 
 date_column_mapping = {
     "Order Date": "ORDER_DATE",
-    "Ingestion Date": "INGESTION_DATE"
+    "Ingestion Date": "INGESTED_AT"
 }
 
 date_column = date_column_mapping[date_type]
@@ -352,7 +352,7 @@ def load_fulfillment(where_clause, params):
             ) AS CANCELLED_ORDERS,
 
             COUNT(
-                CASE WHEN ORDER_STATUS = 'IN_TRANSIT'
+                CASE WHEN ORDER_STATUS = 'IN TRANSIT'
                 THEN 1 END
             ) AS IN_TRANSIT_ORDERS,
 
@@ -404,19 +404,32 @@ def load_suppliers(where_clause, params):
 
             COUNT(
                 CASE WHEN DELAY_DAYS <= 0
+                       AND SHIPMENT_ID IS NOT NULL
+                       AND SHIPMENT_ID <> 'UNKNOWN'
                 THEN 1 END
             ) AS ON_TIME_ORDERS,
 
             COUNT(
                 CASE WHEN DELAY_DAYS > 0
+                       AND SHIPMENT_ID IS NOT NULL
+                       AND SHIPMENT_ID <> 'UNKNOWN'
                 THEN 1 END
             ) AS DELAYED_ORDERS,
 
             ROUND(
                 COUNT(
                     CASE WHEN DELAY_DAYS <= 0
+                           AND SHIPMENT_ID IS NOT NULL
+                           AND SHIPMENT_ID <> 'UNKNOWN'
                     THEN 1 END
-                ) * 100.0 / NULLIF(COUNT(*), 0),
+                ) * 100.0 / NULLIF(
+                    COUNT(
+                        CASE WHEN DELAY_DAYS IS NOT NULL
+                               AND SHIPMENT_ID IS NOT NULL
+                               AND SHIPMENT_ID <> 'UNKNOWN'
+                        THEN 1 END
+                    ), 0
+                ),
                 2
             ) AS ON_TIME_RATE_PCT,
 
@@ -486,8 +499,10 @@ def load_shipments(where_clause, params):
     # Add carrier conditions without breaking existing filters.
 
     carrier_condition = """
-        CARRIER IS NOT NULL
-        AND CARRIER != 'UNKNOWN'
+        SHIPMENT_ID IS NOT NULL
+        AND SHIPMENT_ID <> 'UNKNOWN'
+        AND CARRIER IS NOT NULL
+        AND CARRIER <> 'UNKNOWN'
     """
 
     if where_clause:
@@ -521,7 +536,9 @@ def load_shipments(where_clause, params):
                 COUNT(
                     CASE WHEN DELAY_DAYS <= 0
                     THEN 1 END
-                ) * 100.0 / NULLIF(COUNT(*), 0),
+                ) * 100.0 / NULLIF(
+                    COUNT(CASE WHEN DELAY_DAYS IS NOT NULL THEN 1 END), 0
+                ),
                 2
             ) AS ON_TIME_RATE_PCT,
 
@@ -565,8 +582,17 @@ def load_kpis(where_clause, params):
             ROUND(
                 COUNT(
                     CASE WHEN DELAY_DAYS <= 0
+                           AND SHIPMENT_ID IS NOT NULL
+                           AND SHIPMENT_ID <> 'UNKNOWN'
                     THEN 1 END
-                ) * 100.0 / NULLIF(COUNT(*), 0),
+                ) * 100.0 / NULLIF(
+                    COUNT(
+                        CASE WHEN DELAY_DAYS IS NOT NULL
+                               AND SHIPMENT_ID IS NOT NULL
+                               AND SHIPMENT_ID <> 'UNKNOWN'
+                        THEN 1 END
+                    ), 0
+                ),
                 1
             ) AS ON_TIME_RATE
 
@@ -904,7 +930,7 @@ if not df_i.empty:
 
     with inventory_col2:
 
-        st.markdown("**Inventory Turnover by Category**")
+        st.markdown("**Inventory Movement Proxy by Category**")
 
         turnover_chart = (
             df_i.groupby("CATEGORY")[

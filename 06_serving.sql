@@ -5,6 +5,21 @@ USE SCHEMA serving_sch;
 USE WAREHOUSE flowbridge_analytics_wh;
 
 
+-- Narrow, governed row-level contract used by the Streamlit dashboard.
+-- The application reads this secure view rather than the Gold implementation table.
+CREATE OR REPLACE SECURE VIEW serving_sch.vw_supply_chain_overview
+    COMMENT = 'Governed order-grain dashboard contract over Gold'
+AS
+SELECT
+    order_id, order_date, order_status, payment_status,
+    quantity, unit_price, total_amount, delay_days, inventory_level, ingested_at,
+    customer_id, customer_name, customer_region, customer_segment,
+    product_id, product_name, category,
+    supplier_id, supplier_name, supplier_country, lead_time_days, performance_score,
+    warehouse_id, warehouse_location, shipment_id, carrier, ship_date, estimated_delivery
+FROM FLOWBRIDGE_DEV_DB.GOLD_SCH.AGG_BASE;
+
+
 CREATE OR REPLACE SECURE VIEW serving_sch.vw_order_fulfillment
     COMMENT = 'Secure View for GOLD_SCH.AGG_ORDER_FULFILLMENT (Dynamic Table)'
 AS

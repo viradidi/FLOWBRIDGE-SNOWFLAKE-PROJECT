@@ -15,11 +15,10 @@ mixins:
       - pyproject.toml
       - streamlit_app.py
       - .streamlit/config.toml
-    title: Untitled
+    title: FlowBridge Dashboard
     query_warehouse: FLOWBRIDGE_ANALYTICS_WH
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
     grants:
       - privilege: USAGE
-        role: ACCOUNTADMIN
-        with_grant_option: true
+        role: FLOWBRIDGE_ANALYTICS_ROLE
     main_file: streamlit_app.py
