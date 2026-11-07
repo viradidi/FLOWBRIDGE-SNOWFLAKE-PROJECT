@@ -37,17 +37,18 @@ USE DATABASE FLOWBRIDGE_DEV_DB;
 -- PHASE 1: AZURE BLOB STORAGE INTEGRATION
 ----------------------------------------------------------------------
 
-CREATE OR REPLACE STORAGE INTEGRATION FLOWBRIDGE_ADLS_INTEGRATION
+CREATE STORAGE INTEGRATION IF NOT EXISTS FLOWBRIDGE_ADLS_INTEGRATION
     TYPE = EXTERNAL_STAGE
     STORAGE_PROVIDER = AZURE
     ENABLED = TRUE
-    AZURE_TENANT_ID = '5845291b-cf54-44ff-9079-85a52cc20828'
+    AZURE_TENANT_ID = '<AZURE_TENANT_ID>'
     STORAGE_ALLOWED_LOCATIONS = (
         'azure://storageflowbridge.blob.core.windows.net/supply-chain-raw-dev/',
         'azure://storageflowbridge.blob.core.windows.net/supply-chain-raw-prod/'
     );
 
 -- Retrieve Azure identity and consent details.
+-- Replace <AZURE_TENANT_ID> with the target Azure tenant before deployment.
 DESC STORAGE INTEGRATION FLOWBRIDGE_ADLS_INTEGRATION;
 
 -- Grant access to the execution role.
@@ -66,14 +67,14 @@ GRANT USAGE ON INTEGRATION FLOWBRIDGE_ADLS_INTEGRATION
 -- Expected format:
 -- https://storage-account.queue.core.windows.net/queue-name
 
-CREATE OR REPLACE NOTIFICATION INTEGRATION
+CREATE NOTIFICATION INTEGRATION IF NOT EXISTS
     FLOWBRIDGE_AZURE_NOTIFICATIONS_INT
     ENABLED = TRUE
     TYPE = QUEUE
     NOTIFICATION_PROVIDER = AZURE_STORAGE_QUEUE
     AZURE_STORAGE_QUEUE_PRIMARY_URI =
         'https://storageflowbridge.queue.core.windows.net/flowbridge-supply-chain-queue'
-    AZURE_TENANT_ID = '5845291b-cf54-44ff-9079-85a52cc20828';
+    AZURE_TENANT_ID = '<AZURE_TENANT_ID>';
 
 -- Retrieve the Azure consent URL and application name.
 DESC NOTIFICATION INTEGRATION
@@ -106,7 +107,7 @@ USE SCHEMA BRONZE_SCH;
 -- PHASE 4: JSON FILE FORMAT
 ----------------------------------------------------------------------
 
-CREATE OR REPLACE FILE FORMAT JSON_FILE_FORMAT
+CREATE FILE FORMAT IF NOT EXISTS JSON_FILE_FORMAT
     TYPE = JSON
     STRIP_OUTER_ARRAY = TRUE
     COMMENT = 'Flowbridge Bronze JSON ingestion format';
@@ -118,7 +119,7 @@ DESC FILE FORMAT JSON_FILE_FORMAT;
 -- PHASE 5: EXTERNAL AZURE STAGE
 ----------------------------------------------------------------------
 
-CREATE OR REPLACE STAGE ADLS_RAW_STAGE
+CREATE STAGE IF NOT EXISTS ADLS_RAW_STAGE
     URL = 'azure://storageflowbridge.blob.core.windows.net/supply-chain-raw-dev/'
     STORAGE_INTEGRATION = FLOWBRIDGE_ADLS_INTEGRATION
     FILE_FORMAT = JSON_FILE_FORMAT
@@ -132,7 +133,7 @@ LIST @ADLS_RAW_STAGE;
 -- PHASE 6: BRONZE RAW ORDERS TABLE
 ----------------------------------------------------------------------
 
-CREATE OR REPLACE TRANSIENT TABLE RAW_ORDERS (
+CREATE TRANSIENT TABLE IF NOT EXISTS RAW_ORDERS (
     RAW_DATA VARIANT,
     INGESTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     FILE_NAME STRING,
@@ -146,7 +147,7 @@ COMMENT = 'Flowbridge Bronze layer raw supply chain orders';
 -- PHASE 7: SNOWPIPE AUTO-INGESTION
 ----------------------------------------------------------------------
 
-CREATE OR REPLACE PIPE SUPPLY_CHAIN_PIPE
+CREATE PIPE IF NOT EXISTS SUPPLY_CHAIN_PIPE
     AUTO_INGEST = TRUE
     INTEGRATION = 'FLOWBRIDGE_AZURE_NOTIFICATIONS_INT'
     COMMENT = 'Flowbridge Azure Blob to Snowflake automatic ingestion'

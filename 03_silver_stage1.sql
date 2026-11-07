@@ -1,4 +1,3 @@
-```sql
 -- ============================================================================
 -- SESSION ENVIRONMENT SETUP
 -- ============================================================================
@@ -19,7 +18,7 @@ USE WAREHOUSE FLOWBRIDGE_PIPELINE_WH;
 -- Dead Letter Table Definition
 ------------------------------------------------------------
 
-CREATE OR REPLACE TRANSIENT TABLE SILVER_SCH.DEAD_LETTER (
+CREATE TRANSIENT TABLE IF NOT EXISTS SILVER_SCH.DEAD_LETTER (
     RAW_DATA VARIANT,
     ERROR_REASON STRING,
     FILE_NAME STRING,
@@ -33,7 +32,7 @@ COMMENT = 'Dead Letter Table - rejected/bad records from bronze';
 -- Flattened JSON Data
 ------------------------------------------------------------
 
-CREATE OR REPLACE TABLE SILVER_SCH.STG_ORDERS (
+CREATE TABLE IF NOT EXISTS SILVER_SCH.STG_ORDERS (
 
     -- Order Fields
     ORDER_ID          STRING COMMENT 'Unique order identifier',
@@ -68,7 +67,7 @@ CREATE OR REPLACE TABLE SILVER_SCH.STG_ORDERS (
     UNIT_PRICE   FLOAT COMMENT 'Unit price',
 
     -- Financial fields
-    TOTAL_AMOUNT   FLOAT COMMENT 'Total order amount',
+    TOTAL_AMOUNT   NUMBER(18,2) COMMENT 'Total order amount',
     PAYMENT_STATUS STRING COMMENT 'Payment status',
 
     -- Warehouse fields
@@ -91,7 +90,7 @@ COMMENT = 'Silver Stage 1 - flattened and cleaned supply chain orders';
 -- STEP 2 - CHANGE DATA CAPTURE (CDC) STREAM
 -- ============================================================================
 
-CREATE OR REPLACE STREAM SILVER_SCH.RAW_ORDERS_STREAM
+CREATE STREAM IF NOT EXISTS SILVER_SCH.RAW_ORDERS_STREAM
     ON TABLE FLOWBRIDGE_DEV_DB.BRONZE_SCH.RAW_ORDERS
     APPEND_ONLY = TRUE
     SHOW_INITIAL_ROWS = TRUE
@@ -129,17 +128,21 @@ BEGIN
     -- PART 0 - BUFFER STREAM INTO TEMP TABLE
     -- ========================================================================
 
-    CREATE OR REPLACE TEMPORARY TABLE STREAM_BUFFER AS
+    -- Create the buffer before the transaction. Its INSERT consumes the stream;
+    -- the stream offset advances only when all downstream DML commits.
+    CREATE OR REPLACE TEMPORARY TABLE STREAM_BUFFER
+        LIKE FLOWBRIDGE_DEV_DB.BRONZE_SCH.RAW_ORDERS;
 
-    SELECT *
+    BEGIN TRANSACTION;
+
+    INSERT INTO STREAM_BUFFER (
+        RAW_DATA, INGESTED_AT, FILE_NAME, FILE_ROW_NUMBER, LOAD_ID
+    )
+    SELECT RAW_DATA, INGESTED_AT, FILE_NAME, FILE_ROW_NUMBER, LOAD_ID
     FROM SILVER_SCH.RAW_ORDERS_STREAM
-
     WHERE METADATA$ACTION = 'INSERT';
 
-
-    SELECT COUNT(*)
-    INTO :V_PROCESSED
-    FROM STREAM_BUFFER;
+    SELECT COUNT(*) INTO :V_PROCESSED FROM STREAM_BUFFER;
 
 
     -- ========================================================================
@@ -215,6 +218,11 @@ BEGIN
 
             WHEN TRY_TO_DOUBLE(
                     S.RAW_DATA:supplier.performance_score::STRING
+                 ) IS NULL
+                THEN 'Missing or invalid performance_score'
+
+            WHEN TRY_TO_DOUBLE(
+                    S.RAW_DATA:supplier.performance_score::STRING
                  ) > 100
 
                 THEN 'Invalid performance_score > 100: '
@@ -229,11 +237,19 @@ BEGIN
 
             WHEN TRY_TO_NUMBER(
                     S.RAW_DATA:supplier.lead_time_days::STRING
+                 ) IS NULL
+                 OR TRY_TO_NUMBER(
+                    S.RAW_DATA:supplier.lead_time_days::STRING
                  ) < 0
 
                 THEN 'Invalid lead_time_days < 0: '
                      || S.RAW_DATA:supplier.lead_time_days::STRING
 
+
+            -- This order-grain model accepts exactly one product item per order.
+            WHEN ARRAY_SIZE(S.RAW_DATA:items) IS NULL
+                 OR ARRAY_SIZE(S.RAW_DATA:items) <> 1
+                THEN 'Expected exactly one item in items array for this order-grain model'
 
             -- Product level validations
 
@@ -258,13 +274,9 @@ BEGIN
                          'NULL'
                      )
 
-            WHEN TRY_TO_DOUBLE(
-                    S.RAW_DATA:items[0].unit_price::STRING
-                 ) IS NULL
+            WHEN TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) IS NULL
 
-                 OR TRY_TO_DOUBLE(
-                    S.RAW_DATA:items[0].unit_price::STRING
-                 ) < 0
+                 OR TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) < 0
 
                 THEN 'Invalid unit_price: '
                      || COALESCE(
@@ -275,13 +287,9 @@ BEGIN
 
             -- Financial level validations
 
-            WHEN TRY_TO_DOUBLE(
-                    S.RAW_DATA:financials.total_amount::STRING
-                 ) IS NULL
+            WHEN TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) IS NULL
 
-                 OR TRY_TO_DOUBLE(
-                    S.RAW_DATA:financials.total_amount::STRING
-                 ) < 0
+                 OR TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) < 0
 
                 THEN 'Invalid total_amount: '
                      || COALESCE(
@@ -354,6 +362,9 @@ BEGIN
 
         OR TRY_TO_DOUBLE(
             S.RAW_DATA:supplier.performance_score::STRING
+        ) IS NULL
+        OR TRY_TO_DOUBLE(
+            S.RAW_DATA:supplier.performance_score::STRING
         ) > 100
 
         OR TRY_TO_DOUBLE(
@@ -362,11 +373,16 @@ BEGIN
 
         OR TRY_TO_NUMBER(
             S.RAW_DATA:supplier.lead_time_days::STRING
+        ) IS NULL
+        OR TRY_TO_NUMBER(
+            S.RAW_DATA:supplier.lead_time_days::STRING
         ) < 0
 
 
         -- Product level
 
+        OR ARRAY_SIZE(S.RAW_DATA:items) IS NULL
+        OR ARRAY_SIZE(S.RAW_DATA:items) <> 1
         OR NULLIF(
             TRIM(S.RAW_DATA:items[0].product_id::STRING),
             ''
@@ -494,19 +510,9 @@ BEGIN
                 'UNKNOWN'
             ) AS SUPPLIER_COUNTRY,
 
-            COALESCE(
-                TRY_TO_NUMBER(
-                    S.RAW_DATA:supplier.lead_time_days::STRING
-                ),
-                0
-            ) AS LEAD_TIME_DAYS,
+            TRY_TO_NUMBER(S.RAW_DATA:supplier.lead_time_days::STRING) AS LEAD_TIME_DAYS,
 
-            COALESCE(
-                TRY_TO_DOUBLE(
-                    S.RAW_DATA:supplier.performance_score::STRING
-                ),
-                0
-            ) AS PERFORMANCE_SCORE,
+            TRY_TO_DOUBLE(S.RAW_DATA:supplier.performance_score::STRING) AS PERFORMANCE_SCORE,
 
 
             -- Shipment fields
@@ -533,15 +539,8 @@ BEGIN
                 S.RAW_DATA:shipment.estimated_delivery::STRING
             ) AS ESTIMATED_DELIVERY,
 
-            GREATEST(
-                COALESCE(
-                    TRY_TO_NUMBER(
-                        S.RAW_DATA:shipment.delay_days::STRING
-                    ),
-                    0
-                ),
-                0
-            ) AS DELAY_DAYS,
+            -- Keep early deliveries negative and unknown delays NULL.
+            TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) AS DELAY_DAYS,
 
 
             -- Product fields (items[0] -> first array element)
@@ -568,16 +567,12 @@ BEGIN
                 S.RAW_DATA:items[0].quantity::STRING
             ) AS QUANTITY,
 
-            TRY_TO_DOUBLE(
-                S.RAW_DATA:items[0].unit_price::STRING
-            ) AS UNIT_PRICE,
+            TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) AS UNIT_PRICE,
 
 
             -- Financial fields
 
-            TRY_TO_DOUBLE(
-                S.RAW_DATA:financials.total_amount::STRING
-            ) AS TOTAL_AMOUNT,
+            TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) AS TOTAL_AMOUNT,
 
             COALESCE(
                 UPPER(TRIM(
@@ -603,12 +598,7 @@ BEGIN
                 'UNKNOWN'
             ) AS WAREHOUSE_LOCATION,
 
-            COALESCE(
-                TRY_TO_NUMBER(
-                    S.RAW_DATA:warehouse.inventory_level::STRING
-                ),
-                0
-            ) AS INVENTORY_LEVEL,
+            TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) AS INVENTORY_LEVEL,
 
 
             -- Metadata
@@ -653,16 +643,14 @@ BEGIN
                 S.RAW_DATA:supplier.performance_score::STRING
             ) BETWEEN 0 AND 100
 
-            AND (
-                TRY_TO_NUMBER(
-                    S.RAW_DATA:supplier.lead_time_days::STRING
-                ) IS NULL
+            AND TRY_TO_NUMBER(
+                S.RAW_DATA:supplier.lead_time_days::STRING
+            ) IS NOT NULL
+            AND TRY_TO_NUMBER(
+                S.RAW_DATA:supplier.lead_time_days::STRING
+            ) >= 0
 
-                OR TRY_TO_NUMBER(
-                    S.RAW_DATA:supplier.lead_time_days::STRING
-                ) >= 0
-            )
-
+            AND ARRAY_SIZE(S.RAW_DATA:items) = 1
             AND S.RAW_DATA:items[0].product_id::STRING IS NOT NULL
 
             AND TRY_TO_NUMBER(
@@ -673,21 +661,13 @@ BEGIN
                 S.RAW_DATA:items[0].quantity::STRING
             ) > 0
 
-            AND TRY_TO_DOUBLE(
-                S.RAW_DATA:items[0].unit_price::STRING
-            ) IS NOT NULL
+            AND TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) IS NOT NULL
 
-            AND TRY_TO_DOUBLE(
-                S.RAW_DATA:items[0].unit_price::STRING
-            ) >= 0
+            AND TRY_TO_DECIMAL(S.RAW_DATA:items[0].unit_price::STRING, 18, 2) >= 0
 
-            AND TRY_TO_DOUBLE(
-                S.RAW_DATA:financials.total_amount::STRING
-            ) IS NOT NULL
+            AND TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) IS NOT NULL
 
-            AND TRY_TO_DOUBLE(
-                S.RAW_DATA:financials.total_amount::STRING
-            ) >= 0
+            AND TRY_TO_DECIMAL(S.RAW_DATA:financials.total_amount::STRING, 18, 2) >= 0
 
             AND (
                 TRY_TO_NUMBER(
@@ -698,6 +678,11 @@ BEGIN
                     S.RAW_DATA:warehouse.inventory_level::STRING
                 ) >= 0
             )
+
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY UPPER(TRIM(S.RAW_DATA:order_id::STRING))
+            ORDER BY S.INGESTED_AT DESC, S.FILE_NAME DESC, S.FILE_ROW_NUMBER DESC
+        ) = 1
 
     ) AS SRC
 
@@ -710,20 +695,36 @@ BEGIN
 
     WHEN MATCHED THEN UPDATE SET
 
-        TGT.ORDER_STATUS       = SRC.ORDER_STATUS,
-        TGT.CARRIER            = SRC.CARRIER,
-        TGT.SHIP_DATE          = SRC.SHIP_DATE,
-        TGT.ESTIMATED_DELIVERY = SRC.ESTIMATED_DELIVERY,
-        TGT.DELAY_DAYS         = SRC.DELAY_DAYS,
-        TGT.INVENTORY_LEVEL    = SRC.INVENTORY_LEVEL,
-        TGT.PAYMENT_STATUS     = SRC.PAYMENT_STATUS,
-        TGT.CUSTOMER_NAME      = SRC.CUSTOMER_NAME,
-        TGT.CUSTOMER_REGION    = SRC.CUSTOMER_REGION,
-        TGT.SUPPLIER_NAME      = SRC.SUPPLIER_NAME,
-        TGT.PERFORMANCE_SCORE  = SRC.PERFORMANCE_SCORE,
-        TGT.WAREHOUSE_ID       = SRC.WAREHOUSE_ID,
-        TGT.WAREHOUSE_LOCATION = SRC.WAREHOUSE_LOCATION,
-        TGT.TRANSFORMED_AT     = CURRENT_TIMESTAMP()
+        TGT.ORDER_DATE          = SRC.ORDER_DATE,
+        TGT.ORDER_STATUS        = SRC.ORDER_STATUS,
+        TGT.CUSTOMER_ID         = SRC.CUSTOMER_ID,
+        TGT.CUSTOMER_NAME       = SRC.CUSTOMER_NAME,
+        TGT.CUSTOMER_REGION     = SRC.CUSTOMER_REGION,
+        TGT.CUSTOMER_SEGMENT    = SRC.CUSTOMER_SEGMENT,
+        TGT.SUPPLIER_ID         = SRC.SUPPLIER_ID,
+        TGT.SUPPLIER_NAME       = SRC.SUPPLIER_NAME,
+        TGT.SUPPLIER_COUNTRY    = SRC.SUPPLIER_COUNTRY,
+        TGT.LEAD_TIME_DAYS      = SRC.LEAD_TIME_DAYS,
+        TGT.PERFORMANCE_SCORE   = SRC.PERFORMANCE_SCORE,
+        TGT.SHIPMENT_ID         = SRC.SHIPMENT_ID,
+        TGT.CARRIER             = SRC.CARRIER,
+        TGT.SHIP_DATE           = SRC.SHIP_DATE,
+        TGT.ESTIMATED_DELIVERY  = SRC.ESTIMATED_DELIVERY,
+        TGT.DELAY_DAYS          = SRC.DELAY_DAYS,
+        TGT.PRODUCT_ID          = SRC.PRODUCT_ID,
+        TGT.PRODUCT_NAME        = SRC.PRODUCT_NAME,
+        TGT.CATEGORY            = SRC.CATEGORY,
+        TGT.QUANTITY            = SRC.QUANTITY,
+        TGT.UNIT_PRICE          = SRC.UNIT_PRICE,
+        TGT.TOTAL_AMOUNT        = SRC.TOTAL_AMOUNT,
+        TGT.PAYMENT_STATUS      = SRC.PAYMENT_STATUS,
+        TGT.WAREHOUSE_ID        = SRC.WAREHOUSE_ID,
+        TGT.WAREHOUSE_LOCATION  = SRC.WAREHOUSE_LOCATION,
+        TGT.INVENTORY_LEVEL     = SRC.INVENTORY_LEVEL,
+        TGT.FILE_NAME           = SRC.FILE_NAME,
+        TGT.FILE_ROW_NUMBER     = SRC.FILE_ROW_NUMBER,
+        TGT.INGESTED_AT         = SRC.INGESTED_AT,
+        TGT.TRANSFORMED_AT      = CURRENT_TIMESTAMP()
 
 
     -- ========================================================================
@@ -818,6 +819,8 @@ BEGIN
     -- ========================================================================
     -- PART 3 - CLEANUP
     -- ========================================================================
+
+    COMMIT;
 
     DROP TABLE IF EXISTS STREAM_BUFFER;
 

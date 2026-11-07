@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS silver_sch.dim_product (
     product_id STRING NOT NULL,
     product_name STRING NOT NULL,
     category STRING NOT NULL,
-    unit_price FLOAT NOT NULL,
+    unit_price NUMBER(18,2) NOT NULL,
 
     is_active BOOLEAN DEFAULT TRUE,
 
@@ -157,6 +157,15 @@ CREATE TABLE IF NOT EXISTS silver_sch.dim_shipment (
 COMMENT = 'Shipment Dimension - star schema - surrogate key via sequence';
 
 
+-- Stable unknown shipment member for orders that have not shipped.
+INSERT INTO silver_sch.dim_shipment (shipment_sk, shipment_id, carrier, is_active)
+SELECT -1, 'UNKNOWN', 'UNKNOWN', TRUE
+WHERE NOT EXISTS (
+    SELECT 1 FROM silver_sch.dim_shipment
+    WHERE shipment_sk = -1 OR shipment_id = 'UNKNOWN'
+);
+
+
 ----------------------------------------------------------------------
 -- STEP 7 - CREATE FACT_ORDERS
 ----------------------------------------------------------------------
@@ -177,10 +186,10 @@ CREATE TABLE IF NOT EXISTS silver_sch.fact_orders (
     payment_status STRING NOT NULL,
 
     quantity NUMBER NOT NULL,
-    unit_price FLOAT NOT NULL,
-    total_amount FLOAT NOT NULL,
-    delay_days NUMBER NOT NULL,
-    inventory_level NUMBER NOT NULL,
+    unit_price NUMBER(18,2) NOT NULL,
+    total_amount NUMBER(18,2) NOT NULL,
+    delay_days NUMBER,
+    inventory_level NUMBER,
 
     created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     updated_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -220,9 +229,15 @@ BEGIN
     -- PART 1 - CREATE TEMPORARY TABLE FROM STAGING STREAM
     ------------------------------------------------------------------
 
-    CREATE OR REPLACE TEMPORARY TABLE silver_sch.tmp_stream_data AS
+    -- Buffer before the transaction; stream-consuming INSERT and downstream
+    -- MERGEs commit together so failed transforms do not lose stream changes.
+    CREATE OR REPLACE TEMPORARY TABLE silver_sch.tmp_stream_data
+        LIKE silver_sch.stg_orders;
 
-    SELECT *
+    BEGIN TRANSACTION;
+
+    INSERT INTO silver_sch.tmp_stream_data (ORDER_ID, ORDER_DATE, ORDER_STATUS, CUSTOMER_ID, CUSTOMER_NAME, CUSTOMER_REGION, CUSTOMER_SEGMENT, SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_COUNTRY, LEAD_TIME_DAYS, PERFORMANCE_SCORE, SHIPMENT_ID, CARRIER, SHIP_DATE, ESTIMATED_DELIVERY, DELAY_DAYS, PRODUCT_ID, PRODUCT_NAME, CATEGORY, QUANTITY, UNIT_PRICE, TOTAL_AMOUNT, PAYMENT_STATUS, WAREHOUSE_ID, WAREHOUSE_LOCATION, INVENTORY_LEVEL, FILE_NAME, FILE_ROW_NUMBER, INGESTED_AT, TRANSFORMED_AT)
+    SELECT ORDER_ID, ORDER_DATE, ORDER_STATUS, CUSTOMER_ID, CUSTOMER_NAME, CUSTOMER_REGION, CUSTOMER_SEGMENT, SUPPLIER_ID, SUPPLIER_NAME, SUPPLIER_COUNTRY, LEAD_TIME_DAYS, PERFORMANCE_SCORE, SHIPMENT_ID, CARRIER, SHIP_DATE, ESTIMATED_DELIVERY, DELAY_DAYS, PRODUCT_ID, PRODUCT_NAME, CATEGORY, QUANTITY, UNIT_PRICE, TOTAL_AMOUNT, PAYMENT_STATUS, WAREHOUSE_ID, WAREHOUSE_LOCATION, INVENTORY_LEVEL, FILE_NAME, FILE_ROW_NUMBER, INGESTED_AT, TRANSFORMED_AT
     FROM silver_sch.stg_orders_stream
     WHERE METADATA$ACTION = 'INSERT';
 
@@ -245,7 +260,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(customer_id)
-            ORDER BY order_date DESC
+            ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC
         ) = 1
 
     ) AS src
@@ -297,7 +312,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(product_id)
-            ORDER BY order_date DESC
+            ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC
         ) = 1
 
     ) AS src
@@ -350,7 +365,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(supplier_id)
-            ORDER BY order_date DESC
+            ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC
         ) = 1
 
     ) AS src
@@ -403,7 +418,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(warehouse_id)
-            ORDER BY order_date DESC
+            ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC
         ) = 1
 
     ) AS src
@@ -452,7 +467,7 @@ BEGIN
 
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY UPPER(shipment_id)
-            ORDER BY order_date DESC
+            ORDER BY order_date DESC, ingested_at DESC, file_name DESC, file_row_number DESC
         ) = 1
 
     ) AS src
@@ -616,6 +631,8 @@ BEGIN
     ------------------------------------------------------------------
     -- PART 8 - CLEANUP TEMPORARY TABLE
     ------------------------------------------------------------------
+
+    COMMIT;
 
     DROP TABLE IF EXISTS silver_sch.tmp_stream_data;
 
