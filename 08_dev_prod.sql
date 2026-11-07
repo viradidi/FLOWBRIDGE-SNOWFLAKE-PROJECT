@@ -209,13 +209,16 @@ BEGIN
             WHEN s.raw_data:supplier.supplier_id::STRING IS NULL
                 THEN 'Missing supplier_id'
 
-            WHEN s.raw_data:supplier.performance_score::FLOAT > 100
+            WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
+                THEN 'Missing or invalid performance_score'
+            WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) > 100
                 THEN 'Invalid performance_score > 100: ' || s.raw_data:supplier.performance_score::STRING
 
             WHEN s.raw_data:supplier.performance_score::FLOAT < 0
                 THEN 'Invalid performance_score < 0: ' || s.raw_data:supplier.performance_score::STRING
 
-            WHEN s.raw_data:supplier.lead_time_days::NUMBER < 0
+            WHEN TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NULL
+                 OR TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) < 0
                 THEN 'Invalid lead_time_days < 0: ' || s.raw_data:supplier.lead_time_days::STRING
 
             -- This order-grain model supports exactly one product per order.
@@ -240,7 +243,7 @@ BEGIN
                 THEN 'Invalid total_amount: ' || COALESCE(s.raw_data:financials.total_amount::STRING, 'NULL')
 
             -- Warehouse level validations
-            WHEN s.raw_data:warehouse.inventory_level::NUMBER < 0
+            WHEN TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) < 0
                 THEN 'Invalid inventory_level < 0: ' || s.raw_data:warehouse.inventory_level::STRING
 
             ELSE 'Unknown'
@@ -263,9 +266,11 @@ BEGIN
         OR s.raw_data:customer.customer_id::STRING IS NULL
         -- Supplier Level
         OR s.raw_data:supplier.supplier_id::STRING IS NULL
-        OR s.raw_data:supplier.performance_score::FLOAT > 100
+        OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
+        OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) > 100
         OR s.raw_data:supplier.performance_score::FLOAT < 0
-        OR s.raw_data:supplier.lead_time_days::NUMBER < 0
+        OR TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NULL
+        OR TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) < 0
         -- Product Level
         OR ARRAY_SIZE(s.raw_data:items) IS NULL
         OR ARRAY_SIZE(s.raw_data:items) <> 1
@@ -278,7 +283,7 @@ BEGIN
         OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NULL
         OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) < 0
         -- Warehouse Level
-        OR s.raw_data:warehouse.inventory_level::NUMBER < 0
+        OR TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) < 0
     );
 
 
@@ -323,8 +328,8 @@ BEGIN
 
             -- Product fields (items array)
             UPPER(TRIM(s.raw_data:items[0].product_id::STRING)) AS product_id,
-            COALESCE(UPPER(TRIM(s.raw_data:items.product_name::STRING)), 'UNKNOWN') AS product_name,
-            COALESCE(UPPER(TRIM(s.raw_data:items.category::STRING)), 'UNKNOWN') AS category,
+            COALESCE(UPPER(TRIM(s.raw_data:items[0].product_name::STRING)), 'UNKNOWN') AS product_name,
+            COALESCE(UPPER(TRIM(s.raw_data:items[0].category::STRING)), 'UNKNOWN') AS category,
             s.raw_data:items[0].quantity::NUMBER AS quantity,
             TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) AS unit_price,
 
@@ -354,10 +359,8 @@ BEGIN
           AND s.raw_data:customer.customer_id::STRING IS NOT NULL
           AND s.raw_data:supplier.supplier_id::STRING IS NOT NULL
           AND s.raw_data:supplier.performance_score::FLOAT BETWEEN 0 AND 100
-          AND (
-              s.raw_data:supplier.lead_time_days::NUMBER IS NULL
-              OR s.raw_data:supplier.lead_time_days::NUMBER >= 0
-          )
+          AND TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NOT NULL
+          AND TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) >= 0
           AND s.raw_data:items[0].product_id::STRING IS NOT NULL
           AND s.raw_data:items[0].quantity::NUMBER IS NOT NULL
                   AND s.raw_data:items[0].quantity::NUMBER > 0
@@ -366,28 +369,44 @@ BEGIN
         AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NOT NULL
         AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) >= 0
         AND (
-            s.raw_data:warehouse.inventory_level::NUMBER IS NULL
-            OR s.raw_data:warehouse.inventory_level::NUMBER >= 0
+            TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NULL
+            OR TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) >= 0
         )
 ) AS src
 ON tgt.order_id = src.order_id
 
 WHEN MATCHED THEN
     UPDATE SET
-        tgt.order_status       = src.order_status,
-        tgt.carrier            = src.carrier,
-        tgt.ship_date          = src.ship_date,
-        tgt.estimated_delivery = src.estimated_delivery,
-        tgt.delay_days         = src.delay_days,
-        tgt.inventory_level    = src.inventory_level,
-        tgt.payment_status     = src.payment_status,
-        tgt.customer_name      = src.customer_name,
-        tgt.customer_region    = src.customer_region,
-        tgt.supplier_name      = src.supplier_name,
-        tgt.performance_score  = src.performance_score,
-        tgt.warehouse_id       = src.warehouse_id,
-        tgt.warehouse_location = src.warehouse_location,
-        tgt.transformed_at     = CURRENT_TIMESTAMP()
+        tgt.order_date          = src.order_date,
+        tgt.order_status        = src.order_status,
+        tgt.customer_id         = src.customer_id,
+        tgt.customer_name       = src.customer_name,
+        tgt.customer_region     = src.customer_region,
+        tgt.customer_segment    = src.customer_segment,
+        tgt.supplier_id         = src.supplier_id,
+        tgt.supplier_name       = src.supplier_name,
+        tgt.supplier_country    = src.supplier_country,
+        tgt.lead_time_days      = src.lead_time_days,
+        tgt.performance_score   = src.performance_score,
+        tgt.shipment_id         = src.shipment_id,
+        tgt.carrier             = src.carrier,
+        tgt.ship_date           = src.ship_date,
+        tgt.estimated_delivery  = src.estimated_delivery,
+        tgt.delay_days          = src.delay_days,
+        tgt.product_id          = src.product_id,
+        tgt.product_name        = src.product_name,
+        tgt.category            = src.category,
+        tgt.quantity            = src.quantity,
+        tgt.unit_price          = src.unit_price,
+        tgt.total_amount        = src.total_amount,
+        tgt.payment_status      = src.payment_status,
+        tgt.warehouse_id        = src.warehouse_id,
+        tgt.warehouse_location  = src.warehouse_location,
+        tgt.inventory_level     = src.inventory_level,
+        tgt.file_name           = src.file_name,
+        tgt.file_row_number     = src.file_row_number,
+        tgt.ingested_at         = src.ingested_at,
+        tgt.transformed_at      = CURRENT_TIMESTAMP()
 
 WHEN NOT MATCHED THEN
     INSERT (
