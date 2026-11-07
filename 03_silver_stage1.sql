@@ -250,6 +250,10 @@ BEGIN
                  AND TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) IS NULL
                 THEN 'Invalid shipment delay_days'
 
+            WHEN NULLIF(TRIM(S.RAW_DATA:shipment.delay_days::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(S.RAW_DATA:shipment.delay_days::STRING) IS NULL
+                THEN 'Invalid shipment delay_days'
+
             -- This order-grain model accepts exactly one product item per order.
             WHEN ARRAY_SIZE(S.RAW_DATA:items) IS NULL
                  OR ARRAY_SIZE(S.RAW_DATA:items) <> 1
@@ -303,6 +307,10 @@ BEGIN
 
 
             -- Warehouse level validations
+
+            WHEN NULLIF(TRIM(S.RAW_DATA:warehouse.inventory_level::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) IS NULL
+                THEN 'Invalid inventory_level value'
 
             WHEN NULLIF(TRIM(S.RAW_DATA:warehouse.inventory_level::STRING), '') IS NOT NULL
                  AND TRY_TO_NUMBER(S.RAW_DATA:warehouse.inventory_level::STRING) IS NULL
@@ -631,6 +639,7 @@ BEGIN
                 ) IS NOT NULL
             )
 
+            AND NULLIF(UPPER(TRIM(S.RAW_DATA:order_status::STRING)), '') IS NOT NULL
             AND UPPER(TRIM(
                 S.RAW_DATA:order_status::STRING
             )) IN (
