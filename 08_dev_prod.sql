@@ -188,33 +188,37 @@ BEGIN
         s.raw_data,
         CASE
             -- Order level validations
-            WHEN s.raw_data:order_id::STRING IS NULL
+            WHEN NULLIF(TRIM(s.raw_data:order_id::STRING), '') IS NULL
                 THEN 'Missing order_id'
 
             WHEN TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NULL
                  AND s.raw_data:order_date::STRING NOT LIKE '__-__-____'
                 THEN 'Invalid or missing order_date'
 
-            WHEN UPPER(TRIM(s.raw_data:order_status::STRING)) NOT IN (
+            WHEN NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
+                 OR NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NULL
+        OR UPPER(TRIM(s.raw_data:order_status::STRING)) NOT IN (
                      'PENDING', 'PROCESSING', 'SHIPPED', 
                      'IN TRANSIT', 'DELIVERED', 'CANCELLED'
                  )
                 THEN 'Invalid order_status: ' || COALESCE(s.raw_data:order_status::STRING, 'NULL')
 
             -- Customer level validations
-            WHEN s.raw_data:customer.customer_id::STRING IS NULL
+            WHEN NULLIF(TRIM(s.raw_data:customer.customer_id::STRING), '') IS NULL
                 THEN 'Missing customer_id'
 
             -- Supplier level validations
-            WHEN s.raw_data:supplier.supplier_id::STRING IS NULL
+            WHEN NULLIF(TRIM(s.raw_data:supplier.supplier_id::STRING), '') IS NULL
                 THEN 'Missing supplier_id'
 
+            WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
+                THEN 'Missing or invalid performance_score'
             WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
                 THEN 'Missing or invalid performance_score'
             WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) > 100
                 THEN 'Invalid performance_score > 100: ' || s.raw_data:supplier.performance_score::STRING
 
-            WHEN s.raw_data:supplier.performance_score::FLOAT < 0
+            WHEN TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) < 0
                 THEN 'Invalid performance_score < 0: ' || s.raw_data:supplier.performance_score::STRING
 
             WHEN TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NULL
@@ -226,11 +230,11 @@ BEGIN
                  OR ARRAY_SIZE(s.raw_data:items) <> 1
                 THEN 'Expected exactly one item in items array'
             -- Product level validations
-            WHEN s.raw_data:items[0].product_id::STRING IS NULL
+            WHEN NULLIF(TRIM(s.raw_data:items[0].product_id::STRING), '') IS NULL
                 THEN 'Missing product_id'
 
-            WHEN s.raw_data:items[0].quantity::NUMBER IS NULL
-                 OR s.raw_data:items[0].quantity::NUMBER <= 0
+            WHEN TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) IS NULL
+                 OR TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) <= 0
                 THEN 'Invalid quantity: ' || COALESCE(s.raw_data:items[0].quantity::STRING, 'NULL')
 
             WHEN TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NULL
@@ -242,7 +246,13 @@ BEGIN
                  OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) < 0
                 THEN 'Invalid total_amount: ' || COALESCE(s.raw_data:financials.total_amount::STRING, 'NULL')
 
+            WHEN NULLIF(TRIM(s.raw_data:shipment.delay_days::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(s.raw_data:shipment.delay_days::STRING) IS NULL
+                THEN 'Invalid shipment delay_days'
             -- Warehouse level validations
+            WHEN NULLIF(TRIM(s.raw_data:warehouse.inventory_level::STRING), '') IS NOT NULL
+                 AND TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NULL
+                THEN 'Invalid inventory_level value'
             WHEN TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) < 0
                 THEN 'Invalid inventory_level < 0: ' || s.raw_data:warehouse.inventory_level::STRING
 
@@ -253,7 +263,7 @@ BEGIN
     FROM flowbridge_prod_db.silver_sch.stream_buffer AS s
     WHERE (
         -- Order Level
-        s.raw_data:order_id::STRING IS NULL
+        NULLIF(TRIM(s.raw_data:order_id::STRING), '') IS NULL
         OR (
             TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NULL
             AND s.raw_data:order_date::STRING NOT LIKE '__-__-____'
@@ -263,26 +273,29 @@ BEGIN
             'IN TRANSIT', 'DELIVERED', 'CANCELLED'
         )
         -- Customer Level
-        OR s.raw_data:customer.customer_id::STRING IS NULL
+        OR NULLIF(TRIM(s.raw_data:customer.customer_id::STRING), '') IS NULL
         -- Supplier Level
-        OR s.raw_data:supplier.supplier_id::STRING IS NULL
+        OR NULLIF(TRIM(s.raw_data:supplier.supplier_id::STRING), '') IS NULL
+        OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
         OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) IS NULL
         OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) > 100
-        OR s.raw_data:supplier.performance_score::FLOAT < 0
+        OR TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) < 0
         OR TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NULL
         OR TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) < 0
         -- Product Level
         OR ARRAY_SIZE(s.raw_data:items) IS NULL
         OR ARRAY_SIZE(s.raw_data:items) <> 1
-        OR s.raw_data:items[0].product_id::STRING IS NULL
-        OR s.raw_data:items[0].quantity::NUMBER IS NULL
-        OR s.raw_data:items[0].quantity::NUMBER <= 0
+        OR NULLIF(TRIM(s.raw_data:items[0].product_id::STRING), '') IS NULL
+        OR TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) IS NULL
+        OR TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) <= 0
         OR TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NULL
         OR TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) < 0
         -- Financial Level
         OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NULL
         OR TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) < 0
-        -- Warehouse Level
+        -- Optional shipment / warehouse numeric fields
+        OR (NULLIF(TRIM(s.raw_data:shipment.delay_days::STRING), '') IS NOT NULL AND TRY_TO_NUMBER(s.raw_data:shipment.delay_days::STRING) IS NULL)
+        OR (NULLIF(TRIM(s.raw_data:warehouse.inventory_level::STRING), '') IS NOT NULL AND TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) IS NULL)
         OR TRY_TO_NUMBER(s.raw_data:warehouse.inventory_level::STRING) < 0
     );
 
@@ -330,7 +343,7 @@ BEGIN
             UPPER(TRIM(s.raw_data:items[0].product_id::STRING)) AS product_id,
             COALESCE(UPPER(TRIM(s.raw_data:items[0].product_name::STRING)), 'UNKNOWN') AS product_name,
             COALESCE(UPPER(TRIM(s.raw_data:items[0].category::STRING)), 'UNKNOWN') AS category,
-            s.raw_data:items[0].quantity::NUMBER AS quantity,
+            TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) AS quantity,
             TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) AS unit_price,
 
             -- Financial fields
@@ -347,23 +360,25 @@ BEGIN
             s.file_row_number,
             s.ingested_at
         FROM flowbridge_prod_db.silver_sch.stream_buffer AS s
-        WHERE s.raw_data:order_id::STRING IS NOT NULL
+        WHERE NULLIF(TRIM(s.raw_data:order_id::STRING), '') IS NOT NULL
           AND (
               TRY_TO_TIMESTAMP_NTZ(s.raw_data:order_date::STRING) IS NOT NULL
               OR s.raw_data:order_date::STRING LIKE '__-__-____'
           )
+          AND NULLIF(UPPER(TRIM(s.raw_data:order_status::STRING)), '') IS NOT NULL
           AND UPPER(TRIM(s.raw_data:order_status::STRING)) IN (
               'PENDING', 'PROCESSING', 'SHIPPED', 
               'IN TRANSIT', 'DELIVERED', 'CANCELLED'
           )
-          AND s.raw_data:customer.customer_id::STRING IS NOT NULL
-          AND s.raw_data:supplier.supplier_id::STRING IS NOT NULL
-          AND s.raw_data:supplier.performance_score::FLOAT BETWEEN 0 AND 100
+          AND NULLIF(TRIM(s.raw_data:customer.customer_id::STRING), '') IS NOT NULL
+          AND NULLIF(TRIM(s.raw_data:supplier.supplier_id::STRING), '') IS NOT NULL
+          AND TRY_TO_DOUBLE(s.raw_data:supplier.performance_score::STRING) BETWEEN 0 AND 100
           AND TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) IS NOT NULL
           AND TRY_TO_NUMBER(s.raw_data:supplier.lead_time_days::STRING) >= 0
-          AND s.raw_data:items[0].product_id::STRING IS NOT NULL
-          AND s.raw_data:items[0].quantity::NUMBER IS NOT NULL
-                  AND s.raw_data:items[0].quantity::NUMBER > 0
+          AND ARRAY_SIZE(s.raw_data:items) = 1
+          AND NULLIF(TRIM(s.raw_data:items[0].product_id::STRING), '') IS NOT NULL
+          AND TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) IS NOT NULL
+                  AND TRY_TO_NUMBER(s.raw_data:items[0].quantity::STRING) > 0
         AND TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) IS NOT NULL
         AND TRY_TO_DECIMAL(s.raw_data:items[0].unit_price::STRING, 18, 2) >= 0
         AND TRY_TO_DECIMAL(s.raw_data:financials.total_amount::STRING, 18, 2) IS NOT NULL
