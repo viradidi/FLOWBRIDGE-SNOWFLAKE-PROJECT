@@ -62,3 +62,11 @@ Exact Snowflake object names, configuration values, and dependencies are defined
 - The current fact design expects one product item per order payload. Multi-item payloads are rejected; supporting them requires a separate order-line fact grain.
 - The inventory movement ratio is a proxy metric and is not a conventional COGS-based inventory-turnover calculation.
 - The diagrams explain the intended architecture; they are not screenshots or execution evidence. The project owner confirmed that the latest repository version was rerun successfully in their Snowflake environment on 8 November 2026. See the validation guide for the evidence boundary.
+
+## Original business-context illustrations
+
+The project author supplied the following two original visuals. They are retained here as business-context material and should not be confused with the technical data-flow diagram above. The diagrams illustrate the distributor/partner scenario and the manual reporting problem; they are not runtime evidence or a source of measured implementation KPIs.
+
+![Original FlowBridge business context](diagrams/flowbridge-business-context.webp)
+
+![Original FlowBridge business problem](diagrams/flowbridge-business-problem.webp)

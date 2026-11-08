@@ -27,6 +27,14 @@ flowchart LR
 
 See [the architecture documentation](docs/ARCHITECTURE.md) for the business scenario and technical diagrams, and [the operations guide](docs/OPERATIONS.md) for deployment sequencing and environment safeguards. The diagrams explain the platform conceptually; the numbered SQL scripts remain the source of truth for object definitions and dependencies.
 
+## Original business-context illustrations
+
+The following original visuals were supplied by the project author. They explain the business setting and the manual-reporting problem that motivated the scenario. They are **business-context illustrations**, not service-topology diagrams, measured business results, or deployment evidence. The technical platform flow remains documented in the Mermaid architecture above and in [the architecture guide](docs/ARCHITECTURE.md).
+
+![Original FlowBridge business context — industrial equipment distributor and partner network](docs/diagrams/flowbridge-business-context.webp)
+
+![Original FlowBridge business problem — weekly manual reporting across logistics partners](docs/diagrams/flowbridge-business-problem.webp)
+
 ## Engineering capabilities
 
 - **Automated ingestion pattern:** Azure storage integration, event notification, and Snowpipe file auto-ingest.
