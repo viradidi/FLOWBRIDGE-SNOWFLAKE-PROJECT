@@ -21,12 +21,34 @@ class RepositoryContractTests(unittest.TestCase):
             with self.subTest(path=relative_path):
                 self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
-    def test_streamlit_entrypoint_exists(self):
-        self.assertTrue((ROOT / "flowbridge_dashboard" / "streamlit_app.py").is_file())
+    def test_streamlit_project_files_exist(self):
+        dashboard = ROOT / "flowbridge_dashboard"
+        self.assertTrue((dashboard / "streamlit_app.py").is_file())
+        self.assertTrue((dashboard / "pyproject.toml").is_file())
+        self.assertTrue((dashboard / ".streamlit" / "config.toml").is_file())
 
     def test_streamlit_source_parses(self):
         source = ROOT / "flowbridge_dashboard" / "streamlit_app.py"
         ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+
+    def test_validation_commands_match_current_layout(self):
+        guide = (ROOT / "docs" / "VALIDATION.md").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "validation.yml").read_text(encoding="utf-8")
+        expected_compile_command = "python -m compileall -q flowbridge_dashboard"
+        self.assertIn(expected_compile_command, guide)
+        self.assertIn(expected_compile_command, workflow)
+        self.assertIn("python -m pytest -q", guide)
+        self.assertIn("python -m pytest -q", workflow)
+        self.assertNotIn("compileall -q Untitled", guide)
+
+    def test_documented_project_references_exist(self):
+        for relative_path in (
+            "docs/ARCHITECTURE.md",
+            "docs/OPERATIONS.md",
+            "docs/VALIDATION.md",
+        ):
+            with self.subTest(path=relative_path):
+                self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
     def test_readme_documents_scope_and_metric_caveat(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
@@ -34,6 +56,8 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("proxy", readme)
         self.assertIn("snowflake", readme)
         self.assertIn("limitations", readme)
+        self.assertIn("author-confirmed", readme)
+        self.assertNotIn("fresh validation of the most recent repository edits is required", readme)
 
 
 if __name__ == "__main__":
