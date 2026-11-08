@@ -22,10 +22,10 @@ class RepositoryContractTests(unittest.TestCase):
                 self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
     def test_streamlit_entrypoint_exists(self):
-        self.assertTrue((ROOT / "Untitled" / "streamlit_app.py").is_file())
+        self.assertTrue((ROOT / "flowbridge_dashboard" / "streamlit_app.py").is_file())
 
     def test_streamlit_source_parses(self):
-        source = ROOT / "Untitled" / "streamlit_app.py"
+        source = ROOT / "flowbridge_dashboard" / "streamlit_app.py"
         ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
 
     def test_readme_documents_scope_and_metric_caveat(self):
