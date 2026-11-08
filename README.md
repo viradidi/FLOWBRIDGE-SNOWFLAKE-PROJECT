@@ -66,7 +66,7 @@ The deployment is organized in numbered SQL scripts. Review the repository tree 
 | `06_serving.sql` | Secure serving views |
 | `07_governance.sql` | Roles and access grants |
 | `08_dev_prod.sql` | DEV/PROD environment setup and processing |
-| `Untitled/streamlit_app.py` | Streamlit application |
+| `flowbridge_dashboard/streamlit_app.py` | Streamlit application |
 
 ## Key modelling notes
 
