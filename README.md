@@ -27,7 +27,7 @@ flowchart LR
     L[RBAC / Governance] -. controls .-> J
 ```
 
-The diagram is a conceptual overview; consult the SQL deployment scripts for exact object names and dependencies.
+See [the architecture documentation](docs/ARCHITECTURE.md) for the business scenario and Mermaid diagrams. The diagrams are conceptual; consult the SQL deployment scripts for exact object names and dependencies.
 
 ## Engineering capabilities
 
