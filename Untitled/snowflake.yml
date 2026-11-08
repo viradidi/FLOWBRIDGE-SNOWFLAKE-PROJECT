@@ -12,13 +12,13 @@ entities:
 mixins:
   streamlit_shared:
     artifacts:
-      - pyproject.toml
-      - streamlit_app.py
-      - .streamlit/config.toml
+      - flowbridge_dashboard/pyproject.toml
+      - flowbridge_dashboard/streamlit_app.py
+      - flowbridge_dashboard/.streamlit/config.toml
     title: FlowBridge Dashboard
     query_warehouse: FLOWBRIDGE_ANALYTICS_WH
     compute_pool: SYSTEM_COMPUTE_POOL_CPU
     grants:
       - privilege: USAGE
         role: FLOWBRIDGE_ANALYTICS_ROLE
-    main_file: streamlit_app.py
+    main_file: flowbridge_dashboard/streamlit_app.py
