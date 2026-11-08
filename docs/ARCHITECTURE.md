@@ -61,4 +61,4 @@ Exact Snowflake object names, configuration values, and dependencies are defined
 
 - The current fact design expects one product item per order payload. Multi-item payloads are rejected; supporting them requires a separate order-line fact grain.
 - The inventory movement ratio is a proxy metric and is not a conventional COGS-based inventory-turnover calculation.
-- The diagrams explain intended architecture; successful execution is confirmed by the author, while latest-edited deployment artifacts should be freshly validated in Snowflake before asserting they have been verified in their current state.
+- The diagrams explain the intended architecture; they are not screenshots or execution evidence. The project owner confirmed that the latest repository version was rerun successfully in their Snowflake environment on 8 November 2026. See the validation guide for the evidence boundary.
