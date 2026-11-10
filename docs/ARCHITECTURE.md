@@ -18,6 +18,10 @@ flowchart LR
 
 ## Technical solution
 
+![FlowBridge technical solution architecture](diagrams/flowbridge-technical-architecture.svg)
+
+This standalone SVG accompanies the Mermaid source diagram below for easier portfolio and document embedding. It is a logical architecture view, not execution evidence.
+
 ```mermaid
 flowchart TB
     subgraph Azure
