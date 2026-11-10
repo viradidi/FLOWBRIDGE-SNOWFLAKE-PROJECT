@@ -10,6 +10,10 @@ Supply-chain stakeholders need a consolidated view of order, shipment, supplier,
 
 ## Solution architecture
 
+![FlowBridge Snowflake technical architecture](docs/diagrams/flowbridge-technical-architecture.svg)
+
+*Standalone architecture visual exported from the repository's technical design. The SVG explains the implemented processing path; it is not runtime evidence.*
+
 ```mermaid
 flowchart LR
     A[Azure Blob Storage<br/>JSON files] --> B[Azure Queue / Event Notification]
