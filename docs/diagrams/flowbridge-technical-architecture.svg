@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="920" viewBox="0 0 1600 920" role="img" aria-labelledby="title desc">
+<title id="title">FlowBridge Snowflake Supply Chain Data Platform Architecture</title>
+<desc id="desc">Azure Blob Storage JSON files flow through event notifications and Snowflake storage integrations into Snowpipe and Bronze. Snowflake Streams feed Silver validation and dimensional modeling, Gold dynamic tables feed secure serving views, and a Streamlit dashboard consumes governed data. RBAC controls access.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#081322"/><stop offset="1" stop-color="#102b43"/></linearGradient>
+  <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#122e45"/><stop offset="1" stop-color="#0c2033"/></linearGradient>
+  <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3Z" fill="#65e3d2"/></marker>
+  <marker id="p" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3Z" fill="#b1a7ff"/></marker>
+  <style>
+    text{font-family:Inter,Segoe UI,Arial,sans-serif}.eyebrow{font-size:13px;font-weight:700;letter-spacing:2.4px;fill:#8ba9c2}.title{font-size:36px;font-weight:800;letter-spacing:.4px;fill:#f3f8ff}.subtitle{font-size:17px;fill:#b2c7d9}.panel{fill:url(#snow);stroke:#2e506b;stroke-width:1.6}.source{fill:#142d43;stroke:#5489ad;stroke-width:1.5}.event{fill:#18284a;stroke:#8b85da;stroke-width:1.5}.bronze{fill:#3b2a1d;stroke:#e7a65f;stroke-width:2}.silver{fill:#1d3548;stroke:#9bb8cc;stroke-width:2}.gold{fill:#3d351f;stroke:#e4c55c;stroke-width:2}.serving{fill:#123a3d;stroke:#57c3b6;stroke-width:2}.consumer{fill:#17394b;stroke:#57aecb;stroke-width:1.6}.stage{font-size:12px;font-weight:800;letter-spacing:2px;fill:#8ca9c1}.head{font-size:20px;font-weight:750;fill:#f4f8ff}.body{font-size:14px;fill:#c4d5e3}.muted{font-size:12px;fill:#92abc0}.chip{font-size:11px;font-weight:700;letter-spacing:.7px;fill:#c1d9e8}.arrow{fill:none;stroke:#65e3d2;stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#a)}.control{fill:none;stroke:#b1a7ff;stroke-width:2;stroke-dasharray:7 6;marker-end:url(#p)}
+  </style>
+</defs>
+<rect width="1600" height="920" rx="24" fill="url(#bg)"/>
+<circle cx="1430" cy="80" r="230" fill="#17405e" opacity=".15"/>
+<text x="64" y="50" class="eyebrow">DATA PLATFORM / SOLUTION ARCHITECTURE</text>
+<text x="64" y="100" class="title">FLOWBRIDGE</text>
+<text x="64" y="132" class="subtitle">Azure event-driven ingestion · Snowflake medallion processing · governed supply-chain analytics</text>
+<rect x="1280" y="60" width="250" height="42" rx="21" fill="#123d3b" stroke="#318e83"/>
+<circle cx="1305" cy="81" r="5" fill="#5ee1d0"/><text x="1321" y="86" font-size="13" font-weight="700" fill="#aaf3e9">OWNER-CONFIRMED RUN</text>
+<rect x="56" y="174" width="1488" height="190" rx="18" class="panel"/>
+<text x="82" y="204" class="stage">01 / AZURE SOURCE &amp; EVENT NOTIFICATION</text>
+<rect x="82" y="224" width="300" height="106" rx="12" class="source"/>
+<text x="108" y="258" class="head">Azure Blob Storage</text><text x="108" y="284" class="body">JSON order / supply-chain files</text><text x="108" y="307" class="muted">External landing location</text>
+<path d="M382 277H445" class="arrow"/>
+<rect x="455" y="224" width="300" height="106" rx="12" class="event"/>
+<text x="481" y="258" class="head">Azure Queue / Events</text><text x="481" y="284" class="body">Storage event notifications</text><text x="481" y="307" class="muted">File-arrival signal to Snowflake</text>
+<path d="M755 277H818" class="arrow"/>
+<rect x="828" y="224" width="300" height="106" rx="12" class="source"/>
+<text x="854" y="258" class="head">Snowflake Integrations</text><text x="854" y="284" class="body">Storage + notification integration</text><text x="854" y="307" class="muted">Secure external-stage / event wiring</text>
+<path d="M1128 277H1191" class="arrow"/>
+<rect x="1201" y="224" width="300" height="106" rx="12" class="source"/>
+<text x="1227" y="258" class="head">Snowpipe Auto-ingest</text><text x="1227" y="284" class="body">Notification-driven file loading</text><text x="1227" y="307" class="muted">Automated arrival-to-Bronze path</text>
+<rect x="56" y="397" width="1488" height="370" rx="18" class="panel"/>
+<text x="82" y="428" class="stage">02 / SNOWFLAKE DATA PLATFORM</text><text x="1514" y="428" text-anchor="end" class="muted">Streams · Tasks · Procedures · Dynamic Tables · RBAC</text>
+<path d="M1350 330V380H230V474" class="arrow"/>
+<rect x="82" y="470" width="230" height="216" rx="14" class="bronze"/><rect x="82" y="470" width="230" height="7" rx="3" fill="#e7a65f"/>
+<text x="106" y="508" font-size="12" font-weight="800" letter-spacing="2" fill="#f5bd7d">LAYER 01</text><text x="106" y="543" class="head">BRONZE</text><text x="106" y="576" class="body">Raw file landing</text><text x="106" y="601" class="body">Parsed source payloads</text><text x="106" y="626" class="body">Snowpipe load target</text><rect x="106" y="649" width="142" height="20" rx="9" fill="#614323"/><text x="177" y="663" text-anchor="middle" class="chip">RAW / TRACEABLE</text>
+<path d="M312 578H346" class="arrow"/>
+<rect x="356" y="470" width="190" height="216" rx="14" class="event"/><text x="380" y="508" font-size="12" font-weight="800" letter-spacing="2" fill="#b5aaff">CHANGE CAPTURE</text><text x="380" y="543" class="head">Streams</text><text x="380" y="576" class="body">Track new Bronze rows</text><text x="380" y="601" class="body">Drive incremental tasks</text><text x="380" y="626" class="muted">Change metadata</text><rect x="380" y="649" width="115" height="20" rx="9" fill="#302e60"/><text x="437" y="663" text-anchor="middle" class="chip">INCREMENTAL</text>
+<path d="M546 578H580" class="arrow"/>
+<rect x="590" y="470" width="250" height="216" rx="14" class="silver"/><rect x="590" y="470" width="250" height="7" rx="3" fill="#9bb8cc"/><text x="614" y="508" font-size="12" font-weight="800" letter-spacing="2" fill="#b9d3e3">LAYER 02A</text><text x="614" y="543" class="head">SILVER · STAGE 1</text><text x="614" y="576" class="body">Normalize and validate</text><text x="614" y="601" class="body">Required-field / type checks</text><text x="614" y="626" class="body">Rejected rows → dead letter</text><rect x="614" y="649" width="158" height="20" rx="9" fill="#334f63"/><text x="693" y="663" text-anchor="middle" class="chip">QUALITY / DLQ</text>
+<path d="M840 578H874" class="arrow"/>
+<rect x="884" y="470" width="230" height="216" rx="14" class="silver"/><rect x="884" y="470" width="230" height="7" rx="3" fill="#9bb8cc"/><text x="908" y="508" font-size="12" font-weight="800" letter-spacing="2" fill="#b9d3e3">LAYER 02B</text><text x="908" y="543" class="head">SILVER · STAGE 2</text><text x="908" y="576" class="body">Dimension tables</text><text x="908" y="601" class="body">Order-grain fact table</text><text x="908" y="626" class="muted">Deterministic transformations</text><rect x="908" y="649" width="150" height="20" rx="9" fill="#334f63"/><text x="983" y="663" text-anchor="middle" class="chip">CONFORMED MODEL</text>
+<path d="M1114 578H1148" class="arrow"/>
+<rect x="1158" y="470" width="190" height="216" rx="14" class="gold"/><rect x="1158" y="470" width="190" height="7" rx="3" fill="#e4c55c"/><text x="1182" y="508" font-size="12" font-weight="800" letter-spacing="2" fill="#f0d978">LAYER 03</text><text x="1182" y="543" class="head">GOLD</text><text x="1182" y="576" class="body">Dynamic tables</text><text x="1182" y="601" class="body">Analytical aggregates</text><text x="1182" y="626" class="muted">Curated metric outputs</text><rect x="1182" y="649" width="120" height="20" rx="9" fill="#5c4d25"/><text x="1242" y="663" text-anchor="middle" class="chip">ANALYTICS</text>
+<path d="M1348 578H1380" class="arrow"/>
+<rect x="1390" y="470" width="126" height="216" rx="14" class="serving"/><text x="1407" y="508" font-size="11" font-weight="800" letter-spacing="1.5" fill="#8ce6d9">SERVING</text><text x="1453" y="543" text-anchor="middle" class="head">Secure</text><text x="1453" y="567" text-anchor="middle" class="head">Views</text><text x="1407" y="607" class="muted">Governed</text><text x="1407" y="625" class="muted">consumer</text><text x="1407" y="643" class="muted">contract</text>
+<path d="M1453 686V718H800V804" class="control"/>
+<rect x="56" y="797" width="620" height="78" rx="14" class="event"/><text x="82" y="829" class="head">Governance / RBAC</text><text x="82" y="852" class="body">Role-based grants · least-privilege serving access</text>
+<path d="M1453 686V718H1110V804" class="arrow"/>
+<rect x="700" y="797" width="814" height="78" rx="14" class="consumer"/><text x="728" y="829" class="head">Streamlit Supply-Chain Dashboard</text><text x="728" y="852" class="body">Consumes the governed serving view · operational filters and analytical summaries</text>
+<text x="1530" y="905" text-anchor="end" class="muted">Logical architecture from repository SQL, operations guide and Streamlit application · illustrative supply-chain data</text>
+</svg>
