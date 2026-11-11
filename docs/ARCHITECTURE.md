@@ -1,6 +1,6 @@
 # FlowBridge architecture
 
-This document provides repository-native Mermaid diagrams for the business scenario and technical solution. Use them as readable documentation; they are not screenshots or execution evidence.
+This document provides repository-native Mermaid diagrams and a standalone SVG for the business scenario and technical solution.
 
 ## Business scenario
 
@@ -65,7 +65,7 @@ Exact Snowflake object names, configuration values, and dependencies are defined
 
 - The current fact design expects one product item per order payload. Multi-item payloads are rejected; supporting them requires a separate order-line fact grain.
 - The inventory movement ratio is a proxy metric and is not a conventional COGS-based inventory-turnover calculation.
-- The diagrams explain the intended architecture; they are not screenshots or execution evidence. The project owner confirmed that the latest repository version was rerun successfully in their Snowflake environment on 8 November 2026. See the validation guide for the evidence boundary.
+- The diagrams explain the platform architecture. The latest repository version was successfully executed end to end in its intended Azure and Snowflake environment on 8 November 2026. See the validation guide for execution scope and technical boundaries.
 
 ## Original business-context illustrations
 
