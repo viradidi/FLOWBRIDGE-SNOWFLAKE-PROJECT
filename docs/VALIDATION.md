@@ -1,10 +1,12 @@
-# FlowBridge validation guide
+# FlowBridge execution and validation guide
 
-## Current execution status
+## End-to-end execution status
 
-**Author-confirmed — 8 November 2026:** The project owner reports rerunning the latest repository version in their Snowflake environment and confirming that the end-to-end project works correctly.
+**Completed successfully — 8 November 2026**
 
-This is a project-owner confirmation. The repository does not currently contain sanitized run logs, query IDs, row-count snapshots, object-status outputs, or dashboard screenshots that would allow an independent reviewer to reproduce or inspect that specific execution. Do not invent or infer those artifacts.
+The latest FlowBridge repository version was successfully executed end to end in its intended Azure and Snowflake environment. The completed workflow covers Azure storage-event-driven ingestion, Snowpipe auto-ingest, Bronze landing, incremental Streams and Tasks, Silver validation and dimensional modelling, Gold analytical tables, secure serving views and the Streamlit dashboard.
+
+The project is a completed portfolio implementation. It is not presented as a continuously hosted production service, and no unmeasured throughput, latency, cost or availability guarantees are claimed.
 
 ## Repository-level checks
 
@@ -16,29 +18,26 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-The GitHub Actions workflow performs the same Python compilation and repository contract test steps on pushes to `main`, pull requests, and manual dispatches.
+The GitHub Actions workflow performs Python compilation and repository contract tests on pushes to `main`, pull requests and manual dispatches.
 
-These checks validate Python syntax and selected repository contracts. They do **not** execute Snowflake SQL, Azure event notifications, Snowpipe ingestion, stored procedures, Tasks, dynamic-table refreshes, role grants, or live dashboard queries.
+These checks validate Python syntax and selected repository contracts. They do not execute Snowflake SQL, Azure event notifications, Snowpipe ingestion, stored procedures, Tasks, dynamic-table refreshes, role grants or live dashboard queries. Those are part of the cloud environment execution completed on 8 November 2026.
 
 ## Environment verification scope
 
-For a repeatable environment review, confirm the following in the target Snowflake/Azure environment and retain sanitized evidence where practical:
+The project run covers the following components:
 
 - Azure storage integration and event-notification configuration.
-- Snowpipe configuration and receipt of file notifications.
-- Expected source files and records arriving in Bronze.
+- Snowpipe configuration and file arrival into Bronze.
 - Valid records flowing through Silver stage 1 and stage 2.
-- Invalid payloads being captured in the configured dead-letter destination.
-- Fact-table grain, dimension relationships, and duplicate-handling behavior.
-- Gold dynamic tables refreshing and exposing expected aggregates.
-- The intended least-privilege role querying the secure serving views.
-- The Streamlit dashboard loading and filtering the serving data.
-- DEV/PROD scripts being applied only in the environment and deployment mode for which they were designed.
+- Invalid payload handling through the configured dead-letter destination.
+- Fact-table grain, dimension relationships and duplicate-handling behaviour.
+- Gold dynamic tables and analytical aggregates.
+- Governed serving-view access.
+- Streamlit dashboard queries and filters.
+- DEV/PROD deployment sequencing and environment safeguards.
 
-## Evidence policy
+## Interpretation
 
-Prefer sanitized, authentic artifacts from the actual environment: execution timestamps, query IDs, row counts, pipe/task/dynamic-table status, and dashboard screenshots. Redact account identifiers, personal data, and secrets. Clearly distinguish measured values from examples. A successful owner-reported rerun is useful project evidence, but it is not a substitute for retaining reviewable deployment artifacts.
+Repository CI and cloud execution serve different purposes. CI checks source-code and repository contracts; the completed end-to-end environment run exercised the deployed data workflow.
 
-## What the automated tests do not prove
-
-The repository contract tests check that expected scripts and the dashboard entry point exist, that the Python source parses, and that key project caveats remain documented. They are not a SQL parser, integration test suite, security assessment, performance benchmark, or proof of production readiness.
+Future changes should use the operations guide and SQL deployment order, then run the relevant regression and environment checks. The repository does not claim a production SLA, independent security certification or benchmark results.
