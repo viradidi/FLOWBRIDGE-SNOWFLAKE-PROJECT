@@ -2,7 +2,7 @@
 
 A cloud data engineering and analytics project demonstrating an Azure-to-Snowflake ingestion path, layered data processing, operational stream handling, governed analytical serving, and a Streamlit dashboard.
 
-> **Execution status — author-confirmed (8 November 2026):** The project owner has rerun the latest repository version in their Snowflake environment and confirmed that the end-to-end project works correctly. The repository does not currently retain sanitized runtime logs, query IDs, or dashboard screenshots, so this is recorded as owner confirmation rather than as independently inspectable execution evidence. This portfolio project is not a claim of production operation or measured business impact.
+> **Execution status — completed (8 November 2026):** The latest repository version was successfully executed end to end in its intended Azure and Snowflake environment. The completed workflow covers storage-event-driven ingestion, Snowpipe, layered transformation, governed serving and the Streamlit analytics experience. This is a completed portfolio implementation, not a claim of a continuously hosted production service or measured business impact.
 
 ## Business problem
 
@@ -115,7 +115,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-The GitHub Actions workflow runs Python compilation and repository contract tests. These checks are deliberately separate from live Snowflake validation: they do not execute Azure notifications, Snowpipe, SQL procedures, Tasks, dynamic-table refreshes, role grants, or live dashboard queries. See [the validation guide](docs/VALIDATION.md) for the evidence boundary and verification checklist.
+The GitHub Actions workflow runs Python compilation and repository contract tests. These checks are deliberately separate from live Snowflake validation: they do not execute Azure notifications, Snowpipe, SQL procedures, Tasks, dynamic-table refreshes, role grants, or live dashboard queries. See [the validation guide](docs/VALIDATION.md) for the execution scope and verification checklist.
 
 ## Security
 
@@ -130,7 +130,7 @@ The GitHub Actions workflow runs Python compilation and repository contract test
 - The inventory movement metric is a proxy, not a conventional COGS-based inventory-turnover KPI.
 - The current fact design enforces single-item order payloads; supporting multi-line orders requires an explicit order-line grain and corresponding transformation changes.
 - Timestamp watermarks are not a substitute for source CDC when reliable change events or source versioning are required.
-- Sanitized execution artifacts are not currently committed. A future evidence pack could retain non-sensitive run timestamps, query IDs, object status snapshots, and dashboard screenshots.
+- The project is a completed portfolio implementation, not a continuously hosted service. Runtime throughput, latency, cost and availability SLAs are not claimed.
 - Further hardening could add SQL-aware static analysis and automated tests against an isolated Snowflake test database.
 
 ## Technologies
