@@ -56,8 +56,10 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("proxy", readme)
         self.assertIn("snowflake", readme)
         self.assertIn("limitations", readme)
-        self.assertIn("author-confirmed", readme)
-        self.assertNotIn("fresh validation of the most recent repository edits is required", readme)
+        self.assertIn("successfully executed end to end", readme)
+        self.assertIn("8 november 2026", readme)
+        self.assertNotIn("author-confirmed", readme)
+        self.assertNotIn("screenshot pending", readme)
 
 
 if __name__ == "__main__":
