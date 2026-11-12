@@ -1,8 +1,24 @@
 # FlowBridge — Snowflake Supply Chain Data Platform
 
-A cloud data engineering and analytics project demonstrating an Azure-to-Snowflake ingestion path, layered data processing, operational stream handling, governed analytical serving, and a Streamlit dashboard.
+An event-driven supply-chain data platform that moves JSON source data from Azure Blob Storage into Snowflake, applies layered validation and dimensional modelling, and serves curated analytics through secure views and Streamlit.
+
+**Stack:** Azure Blob Storage, Azure Queue/Event Notifications, Snowflake, Snowpipe, Streams, Tasks, Stored Procedures, Dynamic Tables, SQL, RBAC, Streamlit, Python.
 
 > **Execution status — completed (8 November 2026):** The latest repository version was successfully executed end to end in its intended Azure and Snowflake environment. The completed workflow covers storage-event-driven ingestion, Snowpipe, layered transformation, governed serving and the Streamlit analytics experience. This is a completed portfolio implementation, not a claim of a continuously hosted production service or measured business impact.
+
+## Platform at a glance
+
+| Area | Implementation |
+|---|---|
+| Business domain | Orders, shipments, suppliers, warehouses and inventory |
+| Source delivery | JSON files in Azure Blob Storage |
+| Ingestion trigger | Azure storage event / queue notifications |
+| Raw loading | Snowflake storage integration, external stage and Snowpipe |
+| Incremental processing | Snowflake Streams, Tasks and stored procedures |
+| Data quality | Required-field/type validation and dead-letter handling |
+| Curated model | Silver dimensions and order-grain fact; Gold dynamic tables |
+| Serving | Secure views with role-based access |
+| Application | Streamlit supply-chain dashboard |
 
 ## Business problem
 
@@ -12,7 +28,7 @@ Supply-chain stakeholders need a consolidated view of order, shipment, supplier,
 
 ![FlowBridge Snowflake technical architecture](docs/diagrams/flowbridge-technical-architecture.svg)
 
-*Standalone architecture visual exported from the repository's technical design. The SVG explains the implemented processing path; it is not runtime evidence.*
+*Standalone technical architecture visual. The numbered SQL scripts remain the source of truth for object definitions and deployment dependencies.*
 
 ```mermaid
 flowchart LR
@@ -33,11 +49,22 @@ See [the architecture documentation](docs/ARCHITECTURE.md) for the business scen
 
 ## Original business-context illustrations
 
-The following original visuals were supplied by the project author. They explain the business setting and the manual-reporting problem that motivated the scenario. They are **business-context illustrations**, not service-topology diagrams, measured business results, or deployment evidence. The technical platform flow remains documented in the Mermaid architecture above and in [the architecture guide](docs/ARCHITECTURE.md).
+The following original visuals were supplied by the project author. They explain the business setting and the manual-reporting problem that motivated the scenario. They are **business-context illustrations**, not service-topology diagrams or measured business results. The technical platform flow remains documented in the Mermaid architecture above and in [the architecture guide](docs/ARCHITECTURE.md).
 
 ![Original FlowBridge business context — industrial equipment distributor and partner network](docs/diagrams/flowbridge-business-context.webp)
 
 ![Original FlowBridge business problem — weekly manual reporting across logistics partners](docs/diagrams/flowbridge-business-problem.webp)
+
+## How it works
+
+1. JSON source files arrive in Azure Blob Storage.
+2. Azure event notifications trigger the Snowflake auto-ingest path through the configured storage and notification integrations.
+3. Snowpipe loads the incoming payloads into Bronze.
+4. A Snowflake Stream exposes new Bronze records to the Silver validation workflow.
+5. Silver stage 1 standardizes valid payloads and routes rejected records to the configured dead-letter destination.
+6. Silver stage 2 builds dimensions and the order-grain fact table.
+7. Gold dynamic tables publish analytical aggregates for downstream consumers.
+8. Secure serving views expose the approved data contract to the Streamlit dashboard under governed roles.
 
 ## Engineering capabilities
 
@@ -79,12 +106,12 @@ The following original visuals were supplied by the project author. They explain
 | `docs/` | Architecture, operations, and validation documentation |
 | `.github/workflows/validation.yml` | Automated repository-level validation |
 
-## Modelling decisions and metric interpretation
+## Design decisions and metric interpretation
 
-- The current fact grain is **one order with one product item**. Multi-item order payloads are rejected by validation rather than silently represented as one order line.
-- The dashboard's inventory movement ratio is an explicitly named **proxy metric**. It is not conventional inventory turnover calculated from cost of goods sold.
-- Timestamp-based incremental watermarks depend on source timestamps and are not equivalent to source-system change data capture (CDC).
-- Example/demo data is used; analytical results are not representative of a real logistics operation.
+- **Fact grain:** one order with one product item. Multi-item order payloads are rejected by validation rather than silently represented as one order line.
+- **Inventory movement:** the dashboard's inventory movement ratio is an explicitly named proxy metric, not conventional inventory turnover calculated from cost of goods sold.
+- **Incremental capture:** timestamp watermarks depend on source timestamps and are not equivalent to source-system change data capture (CDC).
+- **Data realism:** example/demo data is used; analytical results are not representative of a real logistics operation.
 
 ## Setup and deployment
 
@@ -105,9 +132,11 @@ Exact commands and object dependencies are environment-specific; follow the SQL 
 
 The dashboard reads from `FLOWBRIDGE_PROD_DB.SERVING_SCH.VW_SUPPLY_CHAIN_OVERVIEW`. It provides date, order-status, and customer-region filters, headline KPIs, and order, fulfillment, supplier, inventory, and shipment views. Use a configured Snowflake connection rather than embedding credentials in source code.
 
-## Validation
+## End-to-end execution and automated tests
 
-The project owner has confirmed that the latest version was rerun successfully in Snowflake. For reproducibility, the repository also includes lightweight local checks:
+The latest repository version was successfully executed end to end in its intended Azure and Snowflake environment on **8 November 2026**. The run covered the event-driven ingestion path, Snowpipe loading, Bronze/Silver processing, Gold analytical structures, governed serving views and the Streamlit dashboard.
+
+For local repository checks, run:
 
 ```bash
 python -m compileall -q flowbridge_dashboard
@@ -115,7 +144,7 @@ python -m pip install pytest
 python -m pytest -q
 ```
 
-The GitHub Actions workflow runs Python compilation and repository contract tests. These checks are deliberately separate from live Snowflake validation: they do not execute Azure notifications, Snowpipe, SQL procedures, Tasks, dynamic-table refreshes, role grants, or live dashboard queries. See [the validation guide](docs/VALIDATION.md) for the execution scope and verification checklist.
+GitHub Actions runs the same Python compilation and repository contract tests. These checks validate the application source and selected repository contracts; they do not provision or execute Azure notifications, Snowpipe, SQL procedures, Tasks, dynamic-table refreshes or live Snowflake roles. The completed Azure/Snowflake execution and repository CI are separate validation layers. See [the validation guide](docs/VALIDATION.md) for the validation scope.
 
 ## Security
 
@@ -124,7 +153,7 @@ The GitHub Actions workflow runs Python compilation and repository contract test
 - Treat placeholders as configuration instructions, not deployable credentials.
 - Review account-level resource controls and role grants before applying scripts.
 
-## Limitations and next engineering improvements
+## Limitations and engineering trade-offs
 
 - The project uses illustrative supply-chain data and is not a production logistics system.
 - The inventory movement metric is a proxy, not a conventional COGS-based inventory-turnover KPI.
@@ -132,10 +161,6 @@ The GitHub Actions workflow runs Python compilation and repository contract test
 - Timestamp watermarks are not a substitute for source CDC when reliable change events or source versioning are required.
 - The project is a completed portfolio implementation, not a continuously hosted service. Runtime throughput, latency, cost and availability SLAs are not claimed.
 - Further hardening could add SQL-aware static analysis and automated tests against an isolated Snowflake test database.
-
-## Technologies
-
-Azure Blob Storage · Azure Queue/Event Notifications · Snowflake · Snowpipe · Streams · Tasks · Stored Procedures · Dynamic Tables · SQL · RBAC · Streamlit · Python
 
 ## Author
 
