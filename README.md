@@ -79,15 +79,6 @@ The following original visuals were supplied by the project author. They explain
 - **Environment strategy:** Separate DEV and PROD database objects with an explicit production bootstrap script.
 - **Application layer:** Streamlit dashboard querying the Snowflake serving view.
 
-## Data flow
-
-1. JSON files are delivered to Azure Blob Storage.
-2. Azure event/queue notifications connect storage events to Snowflake ingestion configuration.
-3. Snowpipe loads incoming records into the Bronze layer.
-4. Stream-driven Silver stage 1 processing validates and standardizes payloads; rejected records are routed to a dead-letter table.
-5. Silver stage 2 processing builds dimensions and the fact table.
-6. Gold dynamic tables expose analytical aggregates.
-7. Secure serving views provide curated outputs to the dashboard under governed roles.
 
 ## Repository structure
 
@@ -107,6 +98,17 @@ The following original visuals were supplied by the project author. They explain
 | `.github/workflows/validation.yml` | Automated repository-level validation |
 
 ## Design decisions and metric interpretation
+
+| Decision | Why it is used | Trade-off / boundary |
+|---|---|---|
+| Event-driven Snowpipe ingestion | Azure storage notifications trigger file ingestion without relying on a scheduled polling job | Depends on correctly configured Azure event delivery, notification integration and Snowflake storage integration |
+| Bronze-to-Silver validation boundary | Raw landing is kept separate from payload validation and normalization | Adds a processing stage, but invalid records can be isolated without silently contaminating curated models |
+| Streams, Tasks and procedures | Changes are processed incrementally through ordered SQL workflows | Stream consumption, task dependencies and rerun behavior must be considered during recovery |
+| Gold dynamic tables | Declarative refresh logic maintains analytical aggregates for serving | Refresh behavior and warehouse usage must be managed as data volume and freshness requirements grow |
+| Secure serving views and RBAC | Consumers query a controlled contract rather than receiving broad access to underlying schemas | Role grants and view definitions must evolve with the dashboard contract |
+| Explicit DEV / PROD bootstrap | Keeps production creation separate from development object creation | `08_dev_prod.sql` is a fresh-PROD bootstrap, not a repeatable in-place migration |
+
+Metric and data-model boundaries:
 
 - **Fact grain:** one order with one product item. Multi-item order payloads are rejected by validation rather than silently represented as one order line.
 - **Inventory movement:** the dashboard's inventory movement ratio is an explicitly named proxy metric, not conventional inventory turnover calculated from cost of goods sold.
